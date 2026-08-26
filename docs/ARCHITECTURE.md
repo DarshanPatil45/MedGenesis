@@ -459,6 +459,80 @@ picking whichever number looks best.
 Switching datasets also surfaced a second real bug, this time in the RAG
 backend rather than the model — see §13.5.
 
+### 13.8 MedGenesis extension: Phase 1 (repository/architecture scaffolding)
+
+The project owner requested extending this system toward a broader
+"MedGenesis" specification (structured clinical decision-support framing,
+XGBoost model comparison, PubMed-grounded evidence, a Clinical Analysis
+Agent, MCP tool access) while explicitly rejecting a rewrite: the existing
+FastAPI/SQLite/React+Vite/scikit-learn stack — and its 107 passing tests —
+stays, and the new capabilities are added on top, incrementally, phase by
+phase. Phase 1 is repository/architecture setup only: extension points, not
+functioning features. The distinction below is deliberate and load-bearing —
+none of the "planned" items exist yet, and nothing in this codebase should
+be read as claiming otherwise.
+
+**Implemented now:**
+
+- `app/ml/xgboost_model/` — package skeleton (`config.py`, `preprocessing.py`,
+  `train.py`, `predict.py`, `evaluate.py`, `artifacts/`) with its own artifact
+  directory, kept separate from the RandomForest's `app/ml/artifacts/` so
+  neither model's files can ever collide. Every function raises
+  `NotImplementedError` — no training, no fabricated metrics, no placeholder
+  model files.
+- `app/agents/clinical_agent.py` — `ClinicalAnalysisAgent` skeleton following
+  the exact conventions of the six existing agents (dataclass result,
+  `.run()`, module-level singleton getter). `.run()` raises
+  `NotImplementedError`; no LLM reasoning or medical prompts exist yet.
+- `app/services/pubmed.py` — a `PubMedClient` protocol plus a
+  `NotConfiguredPubMedClient` default implementation, mirroring the
+  try-a-real-backend-then-fall-back pattern already used by `services/rag.py`
+  and `services/llm.py`. No live NCBI E-utilities calls are made; `.search()`
+  raises `NotImplementedError` rather than returning an empty or fabricated
+  result. `PubMedArticle` (the citation-metadata dataclass) is real, working
+  code — only retrieval is a stub.
+- `models/timeline.py` — `EVENT_TYPES` extended with `medication_change` and
+  `lab_result`. Confirmed compatible before changing anything: `event_type`
+  is a plain `String(30)` column with no DB-level enum or CHECK constraint,
+  so this is a pure Python-level validation-tuple addition, not a schema
+  migration. Deliberately **not** added to `services.twin.STATE_EVENT_TYPES`
+  (the tuple that decides what folds into the materialized "current state"
+  view) — how medication history and lab results should materialize is a
+  real modeling decision, left for whichever phase first consumes them
+  rather than decided as scaffolding.
+- `.env.example` — `PUBMED_API_KEY` / `PUBMED_EMAIL` documented as planned,
+  unused variables.
+- 18 new scaffolding tests (`tests/test_phase1_scaffolding.py`) — confirm
+  every stub is an honest `NotImplementedError` (not a silent no-op),
+  confirm the RandomForest artifacts and inference path are byte-for-byte
+  untouched, and confirm the new event types work end-to-end through the
+  one existing Digital Twin service.
+
+**Explicitly not implemented — planned for later phases:**
+
+- XGBoost training, evaluation, or a RandomForest-vs-XGBoost comparison
+  (Phase 4 in the MedGenesis phase list)
+- Any live PubMed / NCBI E-utilities call (Phase 6)
+- Clinical Analysis Agent reasoning or prompts (Phase 7)
+- Extending `evidence_agent.py` to incorporate PubMed sources (Phase 6/7 —
+  extending the existing agent, not a second Evidence Agent)
+- Extending `simulation_agent.py` to score XGBoost-projected scenarios
+  (Phase 8)
+- New Safety Agent rules for the broader MedGenesis fabrication/medication-
+  change/citation-consistency checks (Phase 9)
+- Any change to `agents/orchestrator.py`'s routing — the existing three
+  routes (intake/simulation/chat) are unchanged; a Clinical Analysis node
+  will be introduced only once it does something (Phase 10)
+- MCP tool exposure (`get_patient`, `run_risk_prediction`,
+  `search_medical_evidence`, `search_pubmed`, `run_what_if`) — deferred until
+  the underlying Python functions exist and are independently tested
+  (Phase 13)
+- Next.js frontend, PostgreSQL migration, Flask migration — not planned;
+  Path B was chosen explicitly over a stack pivot (§13.7 established the
+  precedent of switching only when something is genuinely broken, not to
+  match a spec's named technology list when the existing choice already
+  satisfies the underlying requirement)
+
 ## 14. References
 
 - CDC BRFSS 2015 Diabetes Health Indicators — UCI Machine Learning Repository #891 / Centers for Disease Control and Prevention Behavioral Risk Factor Surveillance System (U.S. government work, public domain). The project's active training source — see §13.7.

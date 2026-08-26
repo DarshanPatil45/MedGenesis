@@ -6,7 +6,22 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.types import JSONColumn
 
-EVENT_TYPES = ("measurement", "lifestyle_log", "screening", "care_plan", "chat", "note")
+EVENT_TYPES = (
+    "measurement",
+    "lifestyle_log",
+    "screening",
+    "care_plan",
+    "chat",
+    "note",
+    # Extension point for the MedGenesis Clinical Analysis Agent (planned,
+    # not yet implemented — see docs/ARCHITECTURE.md). Deliberately not
+    # added to twin.STATE_EVENT_TYPES yet: how medication history and lab
+    # results should fold into the materialized "current state" view is a
+    # modeling decision for whichever agent first consumes them, not
+    # something to decide as scaffolding.
+    "medication_change",
+    "lab_result",
+)
 EVENT_SOURCES = ("real", "synthetic")
 
 
