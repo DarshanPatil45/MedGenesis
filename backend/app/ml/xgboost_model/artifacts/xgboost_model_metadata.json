@@ -1,0 +1,173 @@
+{
+  "model_version": "xgboost-candidate-v1-brfss2015",
+  "algorithm": "xgboost",
+  "scope": "educational_screening_only",
+  "source_dataset": "CDC BRFSS 2015 Diabetes Health Indicators (UCI ML Repository #891)",
+  "dataset_identifier": "brfss2015",
+  "target": "diabetes_binary",
+  "disclaimer": "Educational screening-risk candidate model only, trained on 2015 CDC BRFSS self-reported survey data. Not a diagnostic tool and not clinically validated. Reports a model-estimated risk score, not a calibrated clinical probability.",
+  "feature_columns": [
+    "HighBP",
+    "HighChol",
+    "CholCheck",
+    "BMI",
+    "Smoker",
+    "Stroke",
+    "HeartDiseaseorAttack",
+    "PhysActivity",
+    "Fruits",
+    "Veggies",
+    "HvyAlcoholConsump",
+    "AnyHealthcare",
+    "NoDocbcCost",
+    "GenHlth",
+    "MentHlth",
+    "PhysHlth",
+    "DiffWalk",
+    "Sex",
+    "Age",
+    "Education",
+    "Income"
+  ],
+  "n_features": 21,
+  "preprocessing_version": "standard-scaler-v1-shared-with-randomforest",
+  "hyperparameter_search": {
+    "grid": [
+      {
+        "max_depth": 4,
+        "learning_rate": 0.05
+      },
+      {
+        "max_depth": 4,
+        "learning_rate": 0.1
+      },
+      {
+        "max_depth": 6,
+        "learning_rate": 0.05
+      },
+      {
+        "max_depth": 6,
+        "learning_rate": 0.1
+      }
+    ],
+    "results": [
+      {
+        "max_depth": 4,
+        "learning_rate": 0.05,
+        "best_iteration": 294,
+        "val_roc_auc": 0.828854308070054
+      },
+      {
+        "max_depth": 4,
+        "learning_rate": 0.1,
+        "best_iteration": 146,
+        "val_roc_auc": 0.8286348989890306
+      },
+      {
+        "max_depth": 6,
+        "learning_rate": 0.05,
+        "best_iteration": 161,
+        "val_roc_auc": 0.8283905100400495
+      },
+      {
+        "max_depth": 6,
+        "learning_rate": 0.1,
+        "best_iteration": 60,
+        "val_roc_auc": 0.8285221969456523
+      }
+    ]
+  },
+  "selected_hyperparameters": {
+    "n_estimators": 294,
+    "max_depth": 4,
+    "learning_rate": 0.05,
+    "scale_pos_weight": 5.345569382777812,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 1,
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "class_imbalance_handling": {
+    "method": "scale_pos_weight",
+    "value": 5.345569382777812,
+    "note": "Analogous to the RandomForest baseline's class_weight='balanced' \u2014 the algorithm accounts for imbalance directly rather than resampling the data."
+  },
+  "test_metrics": {
+    "accuracy": 0.7205534531693472,
+    "precision": 0.33519910442987366,
+    "recall": 0.7864915572232646,
+    "f1": 0.47006055169320476,
+    "roc_auc": 0.825483363228922
+  },
+  "confusion_matrix": {
+    "tn": 30270,
+    "fp": 12471,
+    "fn": 1707,
+    "tp": 6288
+  },
+  "feature_importances": {
+    "HighBP": 0.4749535024166107,
+    "GenHlth": 0.16301430761814117,
+    "HighChol": 0.08838673681020737,
+    "Age": 0.0516352653503418,
+    "BMI": 0.04130823537707329,
+    "DiffWalk": 0.030590763315558434,
+    "HeartDiseaseorAttack": 0.0293780118227005,
+    "CholCheck": 0.02286284975707531,
+    "HvyAlcoholConsump": 0.021246112883090973,
+    "Income": 0.018086537718772888,
+    "Sex": 0.01446689385920763,
+    "PhysHlth": 0.005782468244433403,
+    "Stroke": 0.00549353240057826,
+    "PhysActivity": 0.005387113429605961,
+    "Education": 0.005322052165865898,
+    "Smoker": 0.004425247199833393,
+    "MentHlth": 0.004001685418188572,
+    "Fruits": 0.0038644829764962196,
+    "Veggies": 0.003313619876280427,
+    "AnyHealthcare": 0.003292413428425789,
+    "NoDocbcCost": 0.0031882075127214193
+  },
+  "shap_feature_importance": {
+    "GenHlth": 0.6079486608505249,
+    "Age": 0.42047223448753357,
+    "HighBP": 0.41055309772491455,
+    "BMI": 0.40722158551216125,
+    "HighChol": 0.29833292961120605,
+    "Income": 0.1470775455236435,
+    "Sex": 0.10917477309703827,
+    "CholCheck": 0.06975110620260239,
+    "HeartDiseaseorAttack": 0.06342098861932755,
+    "HvyAlcoholConsump": 0.04785412549972534,
+    "DiffWalk": 0.043891724199056625,
+    "MentHlth": 0.04058974236249924,
+    "Education": 0.040436167269945145,
+    "Smoker": 0.02083231322467327,
+    "PhysActivity": 0.018480990082025528,
+    "PhysHlth": 0.017818430438637733,
+    "Fruits": 0.015880992636084557,
+    "Stroke": 0.014013505540788174,
+    "NoDocbcCost": 0.008350907824933529,
+    "Veggies": 0.00618702033534646,
+    "AnyHealthcare": 0.003713461570441723
+  },
+  "training_time_seconds": 0.8006806247867644,
+  "inference_time_seconds_test_set": 0.03518462483771145,
+  "inference_time_seconds_per_1000_rows": 0.0006934844062935874,
+  "model_size_bytes": 511497,
+  "trained_at": "2026-08-26T19:24:11.677686+00:00",
+  "random_seed": 42,
+  "n_train": 202944,
+  "n_validation": 30442,
+  "n_test": 50736,
+  "n_duplicate_rows_kept": 23968,
+  "risk_tier_thresholds": {
+    "low_max": 0.33,
+    "moderate_max": 0.66
+  },
+  "class_balance": {
+    "no_diabetes": 213703,
+    "prediabetes_or_diabetes": 39977
+  }
+}

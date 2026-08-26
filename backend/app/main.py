@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from app.agents.safety_agent import get_safety_agent
 from app.database import DATABASE_URL, engine, init_db
-from app.routers import agents, patients, safety, twin
+from app.routers import agents, ml, patients, safety, twin
 from app.schemas import HealthOut
 from app.services.llm import get_llm
 
@@ -59,6 +59,7 @@ app.include_router(patients.router)
 app.include_router(twin.router)
 app.include_router(agents.router)
 app.include_router(safety.router)
+app.include_router(ml.router)
 
 
 @app.get("/api/health", response_model=HealthOut, tags=["meta"])

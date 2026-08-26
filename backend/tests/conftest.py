@@ -12,6 +12,15 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
 os.environ["MEDGENESIS_DISABLE_LLM"] = "true"
 os.environ.pop("MISTRAL_API_KEY", None)
 
+# Must be imported before torch/sentence-transformers (pulled in later via
+# app.main -> the RAG evidence agent). On macOS, xgboost links Homebrew's
+# libomp while torch bundles its own OpenMP runtime; whichever loads second
+# segfaults the process instead of just warning (verified: reproduces with
+# `import torch; import xgboost` in that order, silent with the reverse
+# order). Importing it first here — once, for the whole test session —
+# avoids the crash regardless of which test file pytest collects first.
+import xgboost  # noqa: E402,F401
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import Base, engine  # noqa: E402

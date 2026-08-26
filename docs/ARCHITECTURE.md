@@ -136,7 +136,7 @@ Every risk/simulation/care-plan screen carries a visible "Educational prototype 
 |---|---|---|
 | Backend framework | FastAPI + Uvicorn | Async, auto OpenAPI docs, plays well with ML libs |
 | ORM / DB | SQLAlchemy + **SQLite** | Embedded, ships with Python, zero install and zero configuration — the database file is created on first run. Chosen so the project runs with `pip install` alone, with no server or container runtime for a grader to set up. Postgres/JSONB was considered; see §12 for the tradeoff. |
-| ML | scikit-learn (optionally XGBoost) | Standard, explainable, free |
+| ML | scikit-learn (RandomForest baseline) + XGBoost (candidate, §13.10) + SHAP (explainability) | Standard, explainable, free |
 | Agent orchestration | LangGraph | Open-source, explicit graph/state, good for showing agentic + safety-gate design |
 | Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) | Local CPU inference, free |
 | Vector store | ChromaDB (embedded mode) | Local, open-source, no server |
@@ -175,6 +175,8 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 - `POST /api/chat` — Conversational Agent (orchestrated; may call Evidence/Screening/What-if as tools), gated through Safety
 - `POST /api/agents/run` — full orchestrated pipeline for a patient, returns complete agent trace + safety statuses (demo/grading endpoint)
 - `GET /api/safety/audit-log` — read the safety review audit trail (admin/grading view)
+- `GET /api/ml/comparison` *(Phase 3, §13.10)* — actual measured RandomForest-vs-XGBoost test metrics, computed live from both persisted artifacts
+- `POST /api/ml/xgboost/predict` *(Phase 3, §13.10)* — scores a patient's twin state with the XGBoost candidate model; comparison-only, not Safety-gated, not the production model
 - `GET /api/health` — liveness check
 
 ## 9. Frontend Pages
@@ -588,6 +590,85 @@ changed and why, matching the Phase 1 entry's format.
   `sleep` — considered and deliberately not added; nothing in the current
   architecture consumes them (see `docs/DIGITAL_TWIN.md`'s "Lifestyle
   information" section for the full reasoning)
+
+### 13.10 MedGenesis extension: Phase 3 (XGBoost training, evaluation, explainability, RF comparison)
+
+Phase 3 turned the Phase 1 XGBoost scaffolding (§13.8) into a real, trained
+candidate model and compared it against the existing RandomForest baseline
+on identical data. Full methodology, hyperparameters, actual measured
+metrics, and the model-selection decision live in `docs/ML.md`
+(and the pre-Phase-3 baseline audit in `docs/ML_BASELINE.md`) — this entry
+records what changed and what's still deliberately absent, matching the
+Phase 1/Phase 2 entries' format.
+
+**Implemented now:**
+
+- `app/ml/xgboost_model/{config,preprocessing,train,predict,evaluate}.py` —
+  every Phase 1 stub replaced with a real implementation: loads the
+  identical CDC BRFSS 2015 dataset/target/21-feature set as the
+  RandomForest (imported from `train_screening_model.py`, not duplicated),
+  same train/test split (`random_state=42`), a small fixed hyperparameter
+  grid selected via a held-out validation split with early stopping, class
+  imbalance handled via `scale_pos_weight`, real saved artifacts
+  (`xgboost_model.joblib`, `xgboost_scaler.joblib`,
+  `xgboost_model_metadata.json`).
+- `app/ml/xgboost_model/explain.py` *(new)* — native gain-based feature
+  importance plus an independent SHAP cross-check; both explicitly
+  documented as "what the model weighted," not a causal medical claim.
+- `app/ml/model_comparison.py` *(new)* — loads both models' persisted
+  artifacts (never retrains either), reproduces the RandomForest's own test
+  split to recover its confusion matrix/timing (not stored in its original
+  metadata), self-checks that reproduction against the RandomForest's
+  stored metadata before trusting it, and reports the actual measured
+  comparison. Result: XGBoost measures modestly better on every metric
+  (~0.7 ROC-AUC points) while its artifact is ~26× smaller and ~7.5× faster
+  at inference — not assumed in advance, and not a large enough margin to
+  automatically replace the production model (§13.10's "Model decision" in
+  `docs/ML.md`).
+- `app/routers/ml.py` + `GET /api/ml/comparison` / `POST
+  /api/ml/xgboost/predict` (§8) — read-only, not Safety-gated, not
+  persisted, entirely separate from `POST /api/screening/run`, which this
+  phase left completely unmodified (confirmed by
+  `tests/test_ml_api.py::TestProductionScreeningEndpointUnaffected`).
+- A genuine dataset-integrity finding surfaced during this phase's Step 2
+  audit: ~12.7% of the BRFSS test split's rows are exact duplicates
+  (feature *and* label) of a row also present in the training split, a
+  side effect of the dataset's many low-cardinality features combined with
+  row-independent splitting. Documented in `docs/ML.md`'s "Dataset
+  integrity" section along with why it was left uncorrected for this
+  comparison (correcting it would require a different split than the one
+  the RandomForest's own reported metrics were evaluated against, breaking
+  the fairness requirement it exists to serve) rather than silently fixed.
+- A real, reproducible macOS environment issue was found and fixed:
+  `xgboost` and `torch` (pulled in by the RAG evidence agent) ship
+  incompatible bundled OpenMP runtimes and segfault the test process if
+  `torch` loads first. Fixed by importing `xgboost` first in
+  `tests/conftest.py`, with the reproduction steps recorded in a comment
+  there.
+- 40 new/updated tests across `tests/test_xgboost_model.py` (new),
+  `tests/test_ml_api.py` (new), and `tests/test_phase1_scaffolding.py`
+  (five now-obsolete "is this a stub" assertions retired — the explicit
+  goal of this phase was to make them stop being true — and replaced with
+  two narrower ones for what's still true: the package imports cleanly and
+  its artifacts stay isolated from the RandomForest's).
+
+**Explicitly not implemented — planned for later phases:**
+
+- Any change to which model is the default/production one — RandomForest
+  remains the sole model behind `POST /api/screening/run`; model
+  *selection* between the two was explicitly out of this phase's scope
+  (Phase 3 Step 16)
+- A lab/medication-aware XGBoost variant — the CDC BRFSS 2015 training
+  dataset has no lab or medication columns at all, so there is nothing
+  legitimate to train such a model against without fabricating labels,
+  which is explicitly disallowed; see `docs/ML.md`'s "Digital Twin
+  boundary" section
+- Wiring the XGBoost candidate into the Orchestrator, Safety Agent, or any
+  agent's reasoning — Phase 3 was ML-layer only, per its own explicit "do
+  not implement" list (PubMed, RAG, Clinical Agent, What-if Agent, Safety
+  Agent, MCP, frontend, database/framework migrations)
+- MCP tool exposure for either model — still deferred to Phase 13 of the
+  original MedGenesis phase list (§13.8)
 
 ## 14. References
 

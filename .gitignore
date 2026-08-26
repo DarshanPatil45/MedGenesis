@@ -13,10 +13,11 @@ dist/
 backend/.env
 frontend/.env
 
-# Local model / vector-store artifacts (regenerate with the training script)
+# Local model / vector-store artifacts (regenerate with the training script).
+# Metadata JSON files are small and human-readable — kept as committed proof
+# of training, same convention as the RandomForest's screening_model_metadata.json.
 backend/app/ml/artifacts/*.joblib
 backend/app/ml/xgboost_model/artifacts/*.joblib
-backend/app/ml/xgboost_model/artifacts/*.json
 backend/data/chroma/
 venv/
 .venv/

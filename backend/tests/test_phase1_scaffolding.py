@@ -13,47 +13,31 @@ from __future__ import annotations
 import pytest
 
 
-class TestXGBoostScaffolding:
-    def test_all_modules_import_cleanly(self):
-        from app.ml.xgboost_model import config, evaluate, predict, preprocessing, train  # noqa: F401
+class TestXGBoostNowImplemented:
+    """Phase 1 introduced the XGBoost package as scaffolding — every
+    function raised NotImplementedError, which this class used to verify
+    directly (that every stub was an honest stub, not a silent no-op).
+    Phase 3 (docs/ML.md) replaced those stubs with a real, trained
+    implementation, which makes those specific assertions obsolete by
+    design — the whole point of that phase was to make load_data(),
+    train_and_evaluate(), score_vector(), and compare_to_baseline() stop
+    raising NotImplementedError. Comprehensive behavioral tests for the real
+    implementation live in tests/test_xgboost_model.py and
+    tests/test_ml_api.py. What's still checked here is what Phase 1
+    established and Phase 3 was explicitly required to preserve: the
+    package still imports cleanly and its artifacts stay isolated from the
+    RandomForest's (see TestRandomForestUntouched, immediately below, for
+    the RandomForest side of that guarantee)."""
 
-    def test_artifact_dir_exists_and_is_separate_from_randomforest(self):
-        from app.ml.xgboost_model.config import ARTIFACT_DIR
+    def test_all_modules_import_cleanly(self):
+        from app.ml.xgboost_model import config, evaluate, explain, predict, preprocessing, train  # noqa: F401
+
+    def test_artifact_dir_is_still_separate_from_randomforest(self):
         from app.ml.train_screening_model import ARTIFACT_DIR as RF_ARTIFACT_DIR
+        from app.ml.xgboost_model.config import ARTIFACT_DIR
 
         assert ARTIFACT_DIR.exists() and ARTIFACT_DIR.is_dir()
         assert ARTIFACT_DIR.resolve() != RF_ARTIFACT_DIR.resolve()
-
-    def test_no_model_artifacts_exist_yet(self):
-        """Nothing has been trained in this phase — guards against ever
-        accidentally shipping a fabricated/placeholder model file."""
-        from app.ml.xgboost_model.config import ARTIFACT_DIR
-
-        assert list(ARTIFACT_DIR.glob("*.joblib")) == []
-
-    def test_preprocessing_is_an_honest_stub(self):
-        from app.ml.xgboost_model.preprocessing import load_data
-
-        with pytest.raises(NotImplementedError):
-            load_data()
-
-    def test_train_is_an_honest_stub(self):
-        from app.ml.xgboost_model.train import train_and_evaluate
-
-        with pytest.raises(NotImplementedError):
-            train_and_evaluate()
-
-    def test_predict_is_an_honest_stub(self):
-        from app.ml.xgboost_model.predict import score_vector
-
-        with pytest.raises(NotImplementedError):
-            score_vector({})
-
-    def test_evaluate_is_an_honest_stub(self):
-        from app.ml.xgboost_model.evaluate import compare_to_baseline
-
-        with pytest.raises(NotImplementedError):
-            compare_to_baseline()
 
 
 class TestRandomForestUntouched:

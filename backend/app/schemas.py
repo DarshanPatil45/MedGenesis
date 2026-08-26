@@ -219,3 +219,43 @@ class HealthOut(BaseModel):
     rag_backend: str
     llm: str
     policy_version: str
+
+
+# --- Phase 3: XGBoost candidate model / RandomForest comparison (docs/ML.md) ---
+# Separate from the production screening pipeline (ScreeningRequest/ScreeningOut
+# above, unchanged) — these are comparison/candidate-model schemas only.
+
+
+class XGBoostPredictRequest(BaseModel):
+    patient_id: int
+
+
+class XGBoostPredictOut(BaseModel):
+    model: str
+    model_version: str
+    status: str
+    prediction: int | None
+    score: float | None
+    risk_tier: str | None
+    features_used: list[str]
+    unavailable_reason: str | None
+    disclaimer: str
+
+
+class ModelMetricsOut(BaseModel):
+    model_version: str
+    algorithm: str
+    test_metrics: dict[str, float]
+    confusion_matrix: dict[str, int]
+    training_time_seconds: float | None
+    inference_time_seconds_test_set: float
+    inference_time_seconds_per_1000_rows: float
+    model_size_bytes: int
+    feature_importances: dict[str, float]
+
+
+class ModelComparisonOut(BaseModel):
+    random_forest: ModelMetricsOut
+    xgboost: ModelMetricsOut
+    metrics_table: dict[str, dict[str, float]]
+    n_test: int
