@@ -1,0 +1,110 @@
+# MedGenesis Safety / Clinician-Review Agent — policy rules.
+#
+# Declarative on purpose: the gate is a deterministic policy engine, NOT an
+# LLM judging free text. Same input always produces the same decision, which
+# is what makes the audit log meaningful and the demo reproducible for
+# grading. Bump policy_version whenever a rule changes — every audit row
+# records the version it was decided under.
+
+policy_version: "1.0.0"
+
+# --- BLOCK rules -----------------------------------------------------------
+# Matched case-insensitively against the output's user-visible text. A single
+# hit replaces the whole output with a safe fallback message.
+blocked_patterns:
+  - id: diagnostic_claim
+    reason: "Diagnostic phrasing is out of scope for an educational prototype."
+    patterns:
+      - "you have diabetes"
+      - "you are diabetic"
+      - "you have type 2 diabetes"
+      - "you are prediabetic"
+      - "you have prediabetes"
+      - "i diagnose"
+      - "your diagnosis is"
+      - "this confirms you have"
+      - "you do not have diabetes"
+      - "you don't have diabetes"
+
+  - id: medication_advice
+    reason: "Medication or dosage guidance requires a licensed clinician."
+    patterns:
+      - "metformin"
+      - "insulin injection"
+      - "insulin dose"
+      - "start taking"
+      - "stop taking"
+      - "increase your dose"
+      - "decrease your dose"
+      - "reduce your dose"
+      - "mg daily"
+      - "mg per day"
+      - "units of insulin"
+      - "prescribe"
+      - "prescription"
+
+  - id: false_certainty
+    reason: "Absolute clinical guarantees cannot be made by this system."
+    patterns:
+      - "guaranteed to prevent"
+      - "you will definitely develop"
+      - "you will never develop"
+      - "cure your diabetes"
+      - "cures diabetes"
+
+# --- FLAG rules ------------------------------------------------------------
+# Content is still shown, but with a mandatory clinician-review banner.
+flag_rules:
+  high_risk_tier:
+    enabled: true
+    reason: "High screening-risk tier — recommended: review with a clinician."
+  large_simulation_swing:
+    enabled: true
+    # Absolute change in risk probability across a projected trajectory
+    # beyond which the projection is treated as implausibly large for a
+    # heuristic delta model and flagged for human review.
+    max_abs_probability_swing: 0.30
+    reason: >-
+      Projected risk change exceeds the plausibility threshold for this
+      heuristic delta model — recommended: review with a clinician.
+  urgent_symptoms:
+    enabled: true
+    reason: "Possible urgent symptoms mentioned — direct the user to seek care."
+    patterns:
+      - "chest pain"
+      - "can't breathe"
+      - "cannot breathe"
+      - "unconscious"
+      - "passing out"
+      - "fainted"
+      - "blurred vision"
+      - "numbness in my feet"
+      - "vomiting"
+
+# --- Disclaimer requirement ------------------------------------------------
+# Output kinds that must carry the educational-scope marker. A missing
+# disclaimer is repaired by the gate (appended) and recorded as a flag
+# reason, rather than silently passing.
+disclaimer_required_for:
+  - screening
+  - simulation
+  - care_plan
+  - chat
+
+required_scope: "educational_screening_only"
+
+disclaimer_text: >-
+  Educational prototype — not medical advice, not a diagnostic device. This
+  screening-risk baseline is trained on 2015 CDC BRFSS self-reported survey
+  data and cannot be applied as a clinical Type 2 Diabetes predictor. Discuss
+  any health decision with a qualified clinician.
+
+clinician_review_banner: >-
+  Recommended: review this result with a clinician before acting on it.
+
+blocked_fallback_text: >-
+  This response was withheld by the MedGenesis safety layer because it
+  contained content outside the scope of an educational prototype (for
+  example diagnostic or medication guidance). Please consult a qualified
+  clinician for questions of that kind. You can still ask about general
+  lifestyle and diabetes-education topics.

@@ -1,0 +1,20 @@
+{
+  // Point the editor at the backend virtualenv. Without this, VS Code falls
+  // back to the system interpreter, which has none of this project's
+  // dependencies installed — every `import fastapi` / `sqlalchemy` / `sklearn`
+  // is then reported as unresolved even though the code runs correctly.
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/bin/python",
+  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+  "python.analysis.autoSearchPaths": true,
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["backend/tests"],
+  "python.testing.cwd": "${workspaceFolder}/backend",
+
+  // Same class of issue on the frontend: this project pins TypeScript 6.0.3
+  // (frontend/package.json), but VS Code's editor uses its own bundled
+  // TypeScript by default rather than the workspace's installed version.
+  // That mismatch is what produces squiggles the terminal's `tsc` never
+  // shows — the CLI always runs the real, local 6.0.3.
+  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}

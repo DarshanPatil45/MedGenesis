@@ -1,0 +1,469 @@
+# MedGenesis: Agentic AI Healthcare System for Type 2 Diabetes
+
+**A college project — architecture & design document**
+**Status:** v4 — **implemented**. Reflects the built system; see §13 for changes made during implementation, including a target-leak found in the original imputation strategy ([LEAKAGE.md](LEAKAGE.md)) and a mid-build switch of the training dataset (§13.7).
+**Stack:** free / open-source throughout, with one **optional, disabled-by-default** exception — a hosted Mistral chat backend (§13.4). The system runs fully offline without it. Data: the CDC's public-domain BRFSS 2015 Diabetes Health Indicators survey (screening-risk baseline only) + public-domain guideline text + synthetic demo patients.
+
+---
+
+## 1. Problem Statement
+
+Type 2 Diabetes (T2D) management benefits from continuous risk monitoring, personalized lifestyle coaching, and evidence-grounded guidance — but most patients only get this during brief clinic visits. MedGenesis explores whether a coordinated team of small, specialized AI agents can approximate a lightweight "diabetes care team," built around a **longitudinal patient digital twin** rather than a single-shot prediction: one agent produces an educational screening-risk indicator, another retrieves relevant care guidance, another lets the patient explore "what if I changed X" scenarios against their own timeline, another turns findings into a personalized plan, another handles natural-language conversation — and a dedicated **safety agent gates every high-stakes output** before it reaches the user. An orchestrator decides which agents run, in what order, over the twin's state.
+
+This is an educational prototype, not a certified medical device, and is explicitly designed *not* to claim clinical-grade diabetes prediction — see §4.3 and §12.
+
+## 2. Objectives
+
+1. Maintain a **timestamped Patient Digital Twin** — an event-sourced timeline of a patient's measurements, lifestyle logs, screenings, and simulations — rather than a single overwritable record, so risk and care recommendations are always traceable to a point in time.
+2. Produce an **educational screening-risk baseline** from routine clinical measurements, explicitly scoped as a coarse, non-diagnostic indicator (see §4.3), not a real T2D management predictor.
+3. Let users run **what-if simulations** ("what if my BMI dropped by 2 over 12 weeks?") against their own digital twin and see a projected risk trajectory, with the projection method fully transparent and cited.
+4. Ground all generated advice in retrievable public-domain evidence (RAG) rather than un-sourced LLM output.
+5. Gate every clinically-sensitive output — screening results, care plans, simulations, chat replies — through a **Safety/Clinician-Review Agent** that enforces disclaimers, blocks out-of-scope medical claims, and logs an auditable review trail.
+6. Demonstrate a genuinely **agentic** architecture: multiple cooperating agents with distinct roles, explicit shared state, and a visible reasoning/trace.
+7. Handle only synthetic or already-public de-identified data.
+
+## 3. System Architecture
+
+```
+                          ┌─────────────────────────────┐
+                          │      React Frontend (Vite)    │
+                          │ Intake · Timeline · Simulator │
+                          │ · Care Plan · Chat · Trace     │
+                          └───────────────┬───────────────┘
+                                          │ REST / JSON
+                          ┌───────────────▼───────────────┐
+                          │       FastAPI Backend (API)     │
+                          │ routers: twin, screening, sim,  │
+                          │ careplan, chat, agents           │
+                          └───────────────┬───────────────┘
+                                          │
+                          ┌───────────────▼───────────────┐
+                          │        Orchestrator Agent       │
+                          │  (LangGraph state machine)      │
+                          └──┬──────┬───────┬───────┬───┬───┘
+                             │      │       │       │   │
+      ┌──────────────┐      │      │       │       │   │      ┌───────────────┐
+      │ Patient       │◄─────┘      │       │       │   └─────►│ Conversational │
+      │ Digital Twin  │             │       │       │          │ Agent (Ollama) │
+      │ (event-sourced│      ┌──────▼───┐ ┌─▼─────┐ │          └───────┬───────┘
+      │ timeline;     │      │Screening │ │Evidence│ │                  │
+      │ SQLite)       │      │Risk      │ │(RAG)   │ │                  │
+      │               │      │Baseline  │ │Agent   │ │                  │
+      │ read/append   │      │Agent     │ │(Chroma)│ │                  │
+      │ by all agents │      │(sklearn, │ └────┬───┘ │                  │
+      └──────┬────────┘      │educational│      │    │                  │
+             │                │only)     │      │    │                  │
+             │                └────┬─────┘      │    │                  │
+             │                     │             │    │                  │
+             │   forks (no write)  │             │    │                  │
+             ├─────────────────────┤             │    │                  │
+             │              ┌──────▼──────┐      │    │                  │
+             │              │ What-if      │      │    │                  │
+             │              │ Simulation   │◄─────┘    │                  │
+             │              │ Agent        │           │                  │
+             │              └──────┬──────┘            │                  │
+             │                     │                    │                  │
+             │              ┌──────▼──────┐      ┌──────▼───────┐          │
+             └─────────────►│ Care-Plan    │      │              │◄─────────┘
+                             │ Agent        │      │              │
+                             └──────┬──────┘      │              │
+                                    │              │              │
+                    ┌───────────────▼──────────────▼──────────────▼───────┐
+                    │         Safety / Clinician-Review Agent               │
+                    │  policy-driven gate (safety_policies.yaml) on every   │
+                    │  high-stakes output → APPROVED / FLAGGED / BLOCKED    │
+                    │  writes append-only safety_audit_log                  │
+                    └───────────────────────────┬───────────────────────────┘
+                                                 │
+                                     Response + trace + safety
+                                     status returned to frontend
+```
+
+**Why this shape:** the Digital Twin is a *state layer*, not an LLM agent — it's the single source of truth every other agent reads from and (except the simulator) appends to. The What-if Simulation Agent forks a copy of the twin's current state rather than writing to it, so hypothetical exploration can never contaminate real patient history. The Safety Agent is not optional or advisory — architecturally it sits between every high-stakes agent and the response the user actually sees, so nothing clinically sensitive reaches the UI unreviewed.
+
+## 4. Agent & Service Specifications
+
+### 4.1 Orchestrator Agent
+- **LangGraph** `StateGraph` (free, MIT-licensed, local). Shared state carries: patient id, the relevant twin snapshot, screening result, retrieved evidence, simulation output, draft care plan, conversation history, and a `trace: list[str]` log — shown to the user on the Agent Trace screen.
+- Routing is deterministic, not LLM-decided, for reliability: intake → Screening → Evidence → Care-Plan → Safety Gate; simulation requests → Twin fork → What-if Agent → Safety Gate; chat messages → Conversational Agent (which can call Evidence/Screening/What-if as tools) → Safety Gate.
+
+### 4.2 Patient Digital Twin (state service, not an agent)
+- **Event-sourced timeline**: every measurement, lifestyle log entry, screening result, care plan, or simulation is appended as an immutable, timestamped `timeline_event` row — never overwritten. A patient's "current state" is a materialized view (latest value per field) computed on read.
+- Because history is append-only, the UI can show a real timeline (weight trending down, glucose readings over months) and every screening/care-plan output stays traceable to *exactly* the twin state it was computed from.
+- The What-if Simulation Agent forks a snapshot of this state (copy-on-write) to run hypothetical projections — those projected points are stored in a separate `simulations` table tagged `simulated: true` and are never merged into the real timeline.
+
+### 4.3 Screening Risk Baseline Agent (renamed & reframed from "Risk Prediction")
+- Wraps a **scikit-learn** classifier trained offline on the CDC's 2015 BRFSS Diabetes Health Indicators survey (253,680 records, 21 features) — see §13.7 for why this replaced the project's original Pima Indians Diabetes Dataset model.
+- **Explicit reframing per project scope:** this agent is deliberately *not* presented as a Type 2 Diabetes management predictor. It outputs a **screening-risk indicator** only — a coarse Low/Moderate/High banding meant to illustrate how a classical ML classifier behaves on routine health-survey answers, using self-reported 2015 US telephone-survey data with its own biases (recall accuracy, non-response, telephone-survey coverage). Every response from this agent carries a fixed disclaimer string and a `scope: "educational_screening_only"` field that the Safety Agent checks for.
+- **Eligibility check (important correctness constraint):** unlike the project's original Pima-based model, BRFSS applies to the general adult population, so there is no demographic restriction on who can be screened. The real constraint is **data completeness** — the model needs all 21 of its trained inputs, and BRFSS's "Sex" question was coded as binary (female/male) with no other option recorded, so the model has no encoding for anything else. The agent therefore checks, before scoring, that (a) `patient.sex` is `"female"` or `"male"`, and (b) every required field is on file. If either check fails, it does **not** force a prediction — it returns a structured `unavailable_for_profile` response naming exactly what's missing, and the orchestrator/UI surface that explanation instead of a risk score. The synthetic demo-patient generator intentionally creates both a fully-recorded profile and one with a deliberately incomplete history so this path is exercised and visible in the demo, not hidden.
+- It still returns probability + risk tier + top contributing features (feature importances) for eligible profiles — useful for the pedagogical goal (showing an interpretable ML pipeline) without implying clinical validity or general applicability.
+
+### 4.4 Evidence Retrieval Agent (RAG)
+- Local knowledge base from CDC "Diabetes Basics" / WHO diabetes fact sheet (public-domain / freely reproducible with attribution). Chunked + embedded with local **sentence-transformers** (`all-MiniLM-L6-v2`), stored in embedded **ChromaDB**. Returns top-k cited chunks; downstream agents must quote/cite rather than paraphrase freely.
+
+### 4.5 What-if Simulation Agent *(new)*
+- Takes the patient's current twin state + a structured hypothesis, e.g. `{"bmi_delta": -2, "horizon_weeks": 12}` or `{"smoker_delta": -1, "horizon_weeks": 12}` (a small natural-language parser maps phrases like "what if I lost weight and exercised more" to these structured deltas; unrecognized phrasing asks the user to pick from preset scenarios). `smoker_delta` and `activity_minutes_delta` act on binary flags in the trained model (see §13.7) rather than scaling a continuous quantity.
+- Applies a **transparent, documented delta model** (`backend/app/agents/simulation_rules.py` — e.g. clinically-cited weight-loss-to-BMI conversion, gradual-vs-linear change curves) to project a *sequence* of synthetic future feature vectors across the horizon (e.g. weeks 0/4/8/12).
+- Re-runs the Screening Risk Baseline Agent's model on each projected vector, producing a **risk trajectory** (not a single number) that the frontend plots as a line chart alongside the current baseline.
+- Every simulation output is labeled "simulated projection, not a clinical forecast" and routed through the Safety Agent, which specifically flags unrealistically large projected risk swings for review.
+- This is a counterfactual/sensitivity-analysis technique built entirely from the already-trained screening model plus an explicit, inspectable rule table — no additional black-box model, so it stays explainable and free to build.
+
+### 4.6 Care-Plan Recommendation Agent
+- Rules-driven core (`careplan_rules.py`): risk tier + patient profile → diet focus, activity target, monitoring frequency, follow-up interval. Optionally phrased more naturally by the local LLM, always citing Evidence Agent sources. Can incorporate a What-if scenario's target state ("plan to reach a Moderate-risk projection") when the user asks for one.
+
+### 4.7 Conversational Assistant Agent
+- Small **local, open-source LLM via Ollama** (e.g. `llama3.2:3b` or `phi3:mini`) — free, local, no API key. System prompt restricts it to lifestyle/education topics, requires citing Evidence Agent snippets for factual claims, and forbids diagnostic or medication-dosage language (enforced again downstream by the Safety Agent as a second line of defense). Falls back to a rule-based FAQ responder if Ollama isn't installed, documented in the README.
+
+### 4.8 Safety / Clinician-Review Agent *(new)*
+- A **policy-driven gate**, not a free-text LLM judge (for reliability/reproducibility in grading): rules are declared in `backend/app/agents/safety_policies.yaml` — e.g. block diagnostic phrasing ("you have diabetes"/"you are diabetic"), block medication or dosage suggestions, require the `educational_screening_only` disclaimer to be present on every Screening/Simulation output, flag High risk-tier results and any simulation projecting a swing beyond a configured threshold for mandatory "recommended: review with a clinician" banners.
+- Every agent output that reaches the Safety gate is scored **APPROVED / FLAGGED_FOR_CLINICIAN_REVIEW / BLOCKED**. FLAGGED content is still shown with a visible banner and reasons; BLOCKED content is replaced with a safe fallback message and never shown as-is.
+- Writes every decision to an append-only `safety_audit_log` table (target type/id, status, reasons, policy version, timestamp) — gives the project a genuine governance/auditability story for the report, mirroring how real clinical-AI systems are expected to log review decisions.
+
+## 5. Data Sources & Ethics
+
+| Data | Source | Notes |
+|---|---|---|
+| Screening baseline training data | CDC BRFSS 2015 Diabetes Health Indicators survey (UCI ML Repository #891) | Public domain — U.S. government work (17 U.S.C. §105), de-identified survey responses, no PII. **Used only as an educational screening-risk baseline** — explicitly not presented as a general or clinical T2D management predictor (see §4.3, §12). Replaced the project's original Pima Indians Diabetes Dataset training source; see §13.7. |
+| Knowledge base text | CDC "Diabetes Basics" (U.S. government work, public domain under 17 U.S.C. §105); WHO "Diabetes" fact sheet | CDC text is public domain. **WHO material is copyrighted and is used with attribution under WHO's applicable copyright/permissions policy** (https://www.who.int/about/policies/publishing/copyright) — it is not public domain, so the project stores the source URL, access date, and a short-excerpt/attribution notice alongside every WHO-derived chunk in the vector store metadata, rather than treating it as freely reproducible. |
+| Demo "patients" & timelines | Synthetically generated (`backend/app/ml/synthetic_patients.py`), including multi-timepoint synthetic histories for the Digital Twin demo | Fictional, realistic clinical ranges, never real patient data. |
+| Simulation projections | Derived, not observed | Clearly labeled `simulated: true`, stored separately from the real timeline. |
+
+Every risk/simulation/care-plan screen carries a visible "Educational prototype — not medical advice, not a diagnostic device" banner; the Safety Agent enforces this at the API layer as well, not just in the UI, so it can't be bypassed by a different frontend calling the same API.
+
+## 6. Technology Stack (free / open-source, with one optional exception — §13.4)
+
+| Layer | Choice | Why |
+|---|---|---|
+| Backend framework | FastAPI + Uvicorn | Async, auto OpenAPI docs, plays well with ML libs |
+| ORM / DB | SQLAlchemy + **SQLite** | Embedded, ships with Python, zero install and zero configuration — the database file is created on first run. Chosen so the project runs with `pip install` alone, with no server or container runtime for a grader to set up. Postgres/JSONB was considered; see §12 for the tradeoff. |
+| ML | scikit-learn (optionally XGBoost) | Standard, explainable, free |
+| Agent orchestration | LangGraph | Open-source, explicit graph/state, good for showing agentic + safety-gate design |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) | Local CPU inference, free |
+| Vector store | ChromaDB (embedded mode) | Local, open-source, no server |
+| LLM (chat) | Ollama + open model (llama3.2 / phi3) | Free, local, no API cost |
+| Policy config | PyYAML | Human-readable, versionable safety policy file |
+| Frontend | React + Vite + TypeScript | Fast dev loop, modern |
+| Charts | Recharts | Free; used for both timeline and simulation trajectory charts |
+| Testing | pytest, Vitest/RTL | Free, standard |
+
+No component requires a paid API key, subscription, or license — with the
+single, optional, disabled-by-default exception of the hosted Mistral chat
+backend described in §13.4. The system runs fully offline without it.
+
+## 7. Data Model (SQLite)
+
+- **patients**: id, pseudonym, age, sex (`female`/`male`/`other`/`unspecified`), screening_eligible (bool, derived: `sex in ("female", "male")` — a structural check only; per-request data completeness is checked separately at scoring time, see §4.3), created_at
+- **timeline_events** *(the Digital Twin)*: id, patient_id (FK), event_type (`measurement`/`lifestyle_log`/`screening`/`care_plan`/`chat`/`note`), payload (JSON), recorded_at (timestamp), source (`real`/`synthetic`)
+- **screening_assessments**: id, patient_id (FK), timeline_event_id (FK), status (`scored`/`unavailable_for_profile`), risk_probability (nullable), risk_tier (nullable), unavailable_reason (nullable), top_features (JSON), model_version, scope (`educational_screening_only`), created_at
+- **simulations**: id, patient_id (FK), base_timeline_event_id (FK, the twin state it forked from), hypothesis (JSON), projected_trajectory (JSON list of `{week, risk_probability, risk_tier}`), created_at — simulations also require an eligible profile, same rule as screening
+- **care_plans**: id, patient_id (FK), screening_assessment_id (FK, nullable), simulation_id (FK, nullable), diet_focus, activity_target, monitoring_frequency, follow_up_weeks, narrative_text, sources (JSON), created_at
+- **chat_sessions** / **chat_messages**: id, patient_id (nullable FK), role, agent_name, content, sources (JSON), created_at
+- **safety_audit_log**: id, target_type, target_id, status (`APPROVED`/`FLAGGED_FOR_CLINICIAN_REVIEW`/`BLOCKED`), reasons (JSON), policy_version, reviewed_at
+
+JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which SQLite stores as TEXT and transparently serialises to and from Python dicts and lists. Payloads are therefore readable and round-trip correctly, but are not indexable or queryable by key — see the §12 tradeoff note.
+
+## 8. API Surface (FastAPI)
+
+- `POST /api/patients` — create a patient (or synthetic demo patient with a generated history)
+- `POST /api/twin/{patient_id}/events` — append a timeline event (measurement, lifestyle log, note)
+- `GET /api/twin/{patient_id}/timeline` — full timestamped history (the digital twin view)
+- `POST /api/screening/run` — Screening Risk Baseline Agent on current twin state → probability + tier + disclaimer, gated through Safety
+- `POST /api/simulate` — What-if Simulation Agent: `{patient_id, hypothesis}` → risk trajectory, gated through Safety
+- `POST /api/careplan/generate` — Care-Plan Agent (from a screening assessment or a simulation target)
+- `POST /api/chat` — Conversational Agent (orchestrated; may call Evidence/Screening/What-if as tools), gated through Safety
+- `POST /api/agents/run` — full orchestrated pipeline for a patient, returns complete agent trace + safety statuses (demo/grading endpoint)
+- `GET /api/safety/audit-log` — read the safety review audit trail (admin/grading view)
+- `GET /api/health` — liveness check
+
+## 9. Frontend Pages
+
+1. **Patient Intake** — create/select patient, or load a synthetic demo patient with pre-seeded history
+2. **Digital Twin Timeline** *(new)* — chronological view of all recorded events (measurements, screenings, plans, simulations) for a patient
+3. **Screening Dashboard** — probability gauge, risk tier badge, contributing-factor chart, permanent educational-scope disclaimer
+4. **What-if Simulator** *(new)* — pick/compose a hypothesis, view the projected risk trajectory as a line chart next to the current baseline, with the delta model's assumptions shown inline
+5. **Care Plan** — generated plan with cited sources
+6. **Chat** — conversational assistant with source citations per message
+7. **Agent Trace & Safety Log** *(expanded)* — timeline of which agent ran, in what order, plus each output's Safety status (APPROVED/FLAGGED/BLOCKED) and reasons — the "show your work" screen for both the agentic architecture and the governance layer
+
+## 10. Project Structure
+
+```
+medgenesis/
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── database.py
+│   │   ├── models/                 # ORM: patients, timeline_events, screening_assessments,
+│   │   │                           #      simulations, care_plans, chat, safety_audit_log
+│   │   ├── routers/                # patients, twin, screening, simulate, careplan, chat, agents, safety
+│   │   ├── ml/                     # training script, model artifact, synthetic_patients.py
+│   │   ├── agents/                  # orchestrator.py (LangGraph), screening_agent.py,
+│   │   │                           #   evidence_agent.py, simulation_agent.py, simulation_rules.py,
+│   │   │                           #   careplan_agent.py, careplan_rules.py, conversational_agent.py,
+│   │   │                           #   safety_agent.py, safety_policies.yaml
+│   │   └── services/                # rag.py (Chroma), llm.py (Ollama client), twin.py (event sourcing helpers)
+│   ├── data/                       # diabetes_health_indicators_brfss2015.csv, knowledge_base/*.md
+│   ├── tests/
+│   ├── medgenesis.db               # SQLite database, created on first run (gitignored)
+│   └── requirements.txt
+├── frontend/
+│   ├── src/ (pages/, components/, api/)
+│   └── package.json
+├── docs/
+│   ├── ARCHITECTURE.md         # this document — design
+│   ├── REPORT.md               # project report — results, findings, limitations
+│   └── LEAKAGE.md              # worked analysis of the target-leakage bug
+└── README.md
+```
+
+`DATABASE_URL` defaults to `sqlite:///./medgenesis.db` and only needs setting to relocate the database file (the test suite points it at a temporary path). Tables are created at application startup, so deleting the file resets the app to an empty state.
+
+## 11. Build Plan / Milestones
+
+1. Design doc (this document) ✅
+2. Repo scaffold ✅
+3. Prepare Pima dataset + preprocessing ✅ *(superseded — see §13.7: the project later switched to the CDC BRFSS dataset and `pima.csv` was removed)*
+4. Train & evaluate screening-risk baseline model (explicitly scoped, disclaimer built into output schema) ✅
+5. FastAPI core + Digital Twin service (event-sourced `timeline_events`, patient endpoints) ✅
+6. RAG knowledge base (public-domain text → Chroma) ✅
+7. Safety/Clinician-Review Agent + policy file + audit log (built early so every later agent output can be gated through it) ✅
+8. LangGraph orchestration: Screening, Evidence, Care-Plan, Conversational agents wired through the Safety gate ✅
+9. What-if Simulation Agent (delta model + trajectory projection + Safety gating) ✅
+10. React frontend: 7 pages above, wired to the API ✅
+11. README + setup docs + disclaimers ✅
+12. End-to-end smoke test and delivery ✅
+13. Semantic RAG enabled + natural-language what-if input implemented (§13.5, §13.6) ✅
+14. Training dataset switched from Pima to CDC BRFSS, with the full downstream redesign (§13.7) ✅
+
+## 12. Limitations (worth stating explicitly in a college report)
+
+- The BRFSS dataset is **self-reported survey data, not lab measurements or a diagnosis** — every field is a telephone-survey answer, subject to recall accuracy, non-response, and telephone-survey coverage bias. The trained model is used **only as an educational screening-risk baseline** to demonstrate an interpretable ML pipeline — it is explicitly not presented, marketed, or validated as a general or clinical Type 2 Diabetes management predictor, and every output carries that disclaimer both in the UI and in the API response schema.
+- **Low precision, by design tradeoff.** The served model reaches test ROC-AUC 0.818 with recall 0.774 but precision only 0.330 (see §13.7) — most "elevated risk" flags would be false positives. This comes from class-weight-balancing toward not missing positive cases (prediabetes + diabetes are only ~16% of respondents), a defensible choice for a screening tool, stated plainly rather than hidden behind the headline ROC-AUC.
+- **23,899 duplicate rows (~9.4% of the dataset) were kept, not dropped** — with 17 of 21 features binary and the rest small-cardinality buckets, distinct real respondents sharing an identical answer profile is expected, and there is no principled way to separate a "real" duplicate from a collection artifact.
+- The What-if Simulation Agent's delta model is a transparent, documented heuristic (not a validated physiological/clinical simulation model); projected trajectories illustrate sensitivity of the screening score to hypothetical changes, not a forecast of real clinical outcomes.
+- The Safety Agent's policy rules are a teaching implementation of a governance pattern, not a substitute for real clinical-AI regulatory review.
+- The conversational agent's local LLM is small (3–4B parameters) to stay free/local-friendly, so response quality is more limited than a large hosted model — mitigated by RAG grounding, narrow scope, and Safety-Agent gating.
+- **SQLite was chosen over PostgreSQL, and that is a real tradeoff.** This
+  document originally specified Postgres with `JSONB` payload columns, which
+  would give indexable and queryable JSON, proper concurrent access, and a
+  more production-realistic story for an event-sourced timeline. SQLite was
+  chosen instead because it is embedded in Python: the project runs with
+  `pip install -r requirements.txt` and nothing else — no database server to
+  install, no container runtime, no credentials for a grader to configure.
+  What is given up: JSON payloads are stored as TEXT and cannot be queried or
+  indexed by key (the app reads whole payloads and folds them in Python
+  instead), and concurrent writers would contend on a single file lock at any
+  real scale. For a single-user educational prototype neither limitation is
+  felt, and because the schema is plain SQLAlchemy, moving to Postgres would
+  mean changing a connection string and one column type — not the model layer.
+- This is a prototype for coursework/demonstration, not a validated clinical tool.
+
+## 13. Implementation notes — where the build departed from this design
+
+Four decisions were changed or added while building. Each is recorded here
+because the reasoning matters more than the design doc's original wording.
+
+### 13.1 Imputation strategy changed (target leakage) — historical, see §13.7
+
+This section describes a finding on the project's *original* Pima-based
+training pipeline. The dataset that replaced it (§13.7) has zero nulls and
+needs no imputation step at all, so the specific mechanism below no longer
+exists in the active training script — it is kept for the general lesson,
+which is not dataset-specific.
+
+§4.3 originally specified **per-outcome median imputation**, fitted on the
+train split only. The train/test hygiene was correct, but per-outcome
+imputation leaks the *target*: 49% of `Insulin` values are missing, and
+filling them with the median of their own outcome class assigns exactly
+`100.0` (outcome 0) or `168.0` (outcome 1) — the label, re-encoded as a
+feature. Test ROC-AUC inflated 0.813 → 0.941 and Insulin's importance rose
+0.066 → 0.409, while the model became non-monotonic in insulin.
+
+The training script now fits **both** strategies and always serves the
+leak-free `plain` one, keeping the comparison in the model metadata as a
+teaching artifact. Two tests prevent the leaky model from being served.
+Full write-up: [LEAKAGE.md](LEAKAGE.md).
+
+### 13.2 Screening and care plan are gated separately
+
+The design implied one safety verdict per pipeline run. In the built system
+the intake route gates the screening result **and** the care plan as two
+independent audited events, then merges them into an overall verdict
+(most-severe wins). A single merged row could not answer "was the screening
+result itself reviewed?", which is the question an audit log exists for.
+
+### 13.3 Every optional dependency has a working fallback
+
+So the project is gradeable on a clean machine with no extra installs (the datastore needs no fallback at all — SQLite is embedded):
+
+| Component | Primary | Fallback |
+|---|---|---|
+| Evidence retrieval | ChromaDB + sentence-transformers (installed and verified — see §13.5) | Deterministic keyword ranker with synonym expansion + light stemming |
+| Conversational agent | Mistral API → Ollama | Rule-based responder over the same cited KB |
+
+The active backend for each is reported by `/api/health` and shown in the UI
+sidebar, so a fallback is never mistaken for the primary path.
+
+### 13.4 A hosted LLM backend was added (constraint exception)
+
+An optional **Mistral API** backend was added at the project owner's request.
+It is a **paid hosted service** and therefore the one component that departs
+from the project's free/open-source constraint. It is strictly optional,
+disabled by default (blank `MISTRAL_API_KEY`), and every other agent —
+screening, simulation, evidence, care-plan rules, safety gate — is
+deterministic and runs fully offline. Credentials are read from the
+environment only; `backend/.env` is gitignored and `.env.example` carries
+placeholders.
+
+### 13.5 Semantic RAG was enabled, and a second real bug was found in it
+
+§13.3 above describes the keyword ranker as a *fallback* — it was, for a
+while, also the *default*, because the semantic backend was never installed.
+Once `chromadb` and `sentence-transformers` were actually installed and
+exercised, retrieval initially produced scores like `-0.605` and `-0.391` for
+correct top-1 matches: implausible, since cosine similarity is bounded in
+roughly [-1, 1] and a genuinely relevant match should score positive.
+
+The cause: Chroma creates new collections with raw squared-L2 distance by
+default, not cosine. `ChromaStore` was computing `score = 1.0 - distance` —
+correct arithmetic for cosine distance, meaningless for unbounded L2. Ranking
+itself (which Chroma computes internally from its own distance metric,
+regardless of this post-hoc score) still returned sensible results for easy
+queries, which is what let the bug hide. Fixed by setting
+`metadata={"hnsw:space": "cosine"}` explicitly at collection creation — it
+cannot be changed on an existing collection, so old ones must be rebuilt.
+`tests/test_rag.py::TestChromaStore::test_scores_are_plausible_cosine_similarities`
+regression-guards this.
+
+With that fixed, a 12-query head-to-head against the keyword ranker (6
+queries with literal keyword overlap, 6 rephrased with none) gave an honest,
+modest result — not a dramatic win:
+
+| | Top-1 correct | Top-3 correct (recall) |
+|---|---|---|
+| Keyword ranker | 10/12 | 11/12 |
+| Semantic (Chroma, cosine) | 10/12 | 12/12 |
+
+Top-1 precision tied. The real, defensible difference is recall: the
+semantic backend never returned a total miss, including for phrasing with
+**zero literal keyword overlap** with the source text (e.g. "what are the
+warning signs I should watch for" → *Symptoms*), which is structurally the
+class of query no amount of synonym-table tuning can fix for a keyword
+ranker. It also has a genuine weakness the keyword ranker doesn't: "should I
+check my blood sugar at home" ranked *Diagnosis and screening* above the
+more specific *Blood sugar monitoring*, which the keyword ranker's literal
+"blood sugar" match got right immediately. Both backends are real
+options now, selected automatically by whichever import succeeds — see §13.3.
+
+### 13.6 Natural-language what-if input (§4.5) was implemented
+
+The free-text parser (`app/agents/simulation_nlp.py`) is a **deterministic
+regex/keyword extractor, not an LLM** — consistent with the rest of this
+agent's design, where every number traces to an inspectable rule
+(`simulation_rules.py`). An LLM turning "lost weight" into a specific
+kilogram figure would invent a number with no basis; this parser instead
+substitutes a fixed, documented default (matching the frontend's preset
+scenarios) and discloses that substitution in the same `assumptions` list
+the delta model already returns.
+
+One implementation detail worth recording: the horizon phrase must be
+extracted and stripped from the text *before* per-topic magnitude parsing
+runs. Without that ordering, "what if I exercised more over 12 weeks" would
+have the horizon's "12" read as an activity-minutes magnitude, since both
+extraction passes would be competing for the same number in the same
+string. `test_horizon_number_is_not_mistaken_for_a_magnitude` regression-
+guards this specifically.
+
+Text that doesn't map confidently to a topic + direction is reported as
+unrecognized (`recognized=False`) with guidance toward the preset scenarios,
+never silently defaulted to an empty simulation — matching the spec's
+"unrecognized phrasing asks the user to pick from preset scenarios."
+
+### 13.7 The training dataset was switched from Pima to CDC BRFSS
+
+Requested mid-build, as an extension of the original screening baseline
+work. The request was to add "10,000 more entries" to the training data.
+That surfaced a fact worth stating plainly: the **Pima Indians Diabetes
+Dataset is fixed at exactly 768 rows** — a specific historical collection,
+not something with an official larger version. Any addition would have had
+to be fabricated, which would have quietly falsified the entire leakage
+writeup and the "matches published Pima baselines" comparison in the report
+— both built on this being real, unmodified UCI data. Rather than pad the
+dataset with synthetic rows, the project switched to a different, larger,
+**still-real** public dataset: the **CDC's 2015 BRFSS Diabetes Health
+Indicators survey** (253,680 responses, UCI ML Repository #891), already
+present on the development machine and public domain as a U.S. government
+work — the same legal status as the CDC "Diabetes Basics" text already
+cited in the knowledge base. `pima.csv` has been deleted; nothing in the
+active codebase reads it. Its target-leakage finding is preserved in full in
+[LEAKAGE.md](LEAKAGE.md) as a general lesson, not a claim about the current
+model.
+
+**This changed more than the training data.** Three cascading redesigns,
+each verified against real data before being written down here:
+
+**Eligibility gating.** Pima consists exclusively of women of Pima Heritage
+and includes "number of pregnancies" as a trained feature, so the original
+model hard-gated on `sex == "female"`. BRFSS surveys the general adult
+population — there is no equivalent demographic restriction, so that gate is
+gone. What replaced it is a **data-completeness check**: BRFSS's "Sex"
+question was coded as binary with no other option recorded, so the model
+still can't score a patient whose sex isn't female/male, and it needs all 21
+trained fields present. The demo profile that used to be "ineligible because
+male" is now "ineligible because incomplete" — a male patient is fully
+eligible; a profile missing a few required fields is not. See §4.3.
+
+**The simulation hypothesis space.** BRFSS is a survey, not a lab panel — it
+has no blood-glucose field at all, so `glucose_delta` (a hypothesis
+dimension in the Pima-era simulator) has nothing to act on and was removed.
+`PhysActivity` and `Smoker` are also recorded as binary yes/no answers, not
+continuous quantities. `activity_minutes_delta` and the new `smoker_delta`
+now move a target flag toward 0 or 1 (any positive value means "become
+active" / "start smoking," any negative means the opposite) rather than
+scaling a continuous effect — the sign is what matters, not the magnitude.
+For the projected-trajectory chart to still read as a smooth line rather
+than a step function, intermediate weeks interpolate a `[0, 1]` proxy toward
+the target; this is a display simplification, disclosed as an assumption in
+the API response, not a claim that a real intermediate state exists. Probed
+against the trained model before shipping: a BMI change moves the risk score
+substantially (a −6 BMI swing on the moderate-risk demo profile moves it
+from 59% to 47%), while flipping `PhysActivity` or `Smoker` alone moves it by
+only ~0.005–0.01 — a real, small, honestly-reported effect size, not a bug
+to paper over.
+
+**Feature set and demo profiles.** All 21 BRFSS columns are used (matches
+published usage of this dataset rather than an arbitrary subset), which
+meant rebuilding the patient intake form around checkboxes and dropdowns for
+conditions, lifestyle, healthcare access, and socioeconomic fields instead of
+Pima's seven clinical-measurement inputs. The three demo profiles were
+re-tuned against the actually-trained model (not guessed at) to land in
+visibly different tiers: Low (5.6%), Moderate (59.4%), and a third profile
+with a deliberately incomplete history to exercise the refusal path.
+
+**Model comparison** (both trained the same way — stratified split, 5-fold
+CV, logistic regression vs. random forest, `class_weight="balanced"`):
+
+| | Pima (768 rows, 8 features) | BRFSS (253,680 rows, 21 features) |
+|---|---|---|
+| Algorithm selected | logistic regression | random forest |
+| Test ROC-AUC | 0.813 | 0.818 |
+| Test recall | 0.500 | 0.774 |
+| Test precision | 0.600 | 0.330 |
+| Top feature | Glucose | GenHlth |
+
+Recall improved substantially; precision dropped in exchange — a real
+tradeoff from class-balancing against a dataset where positive cases are a
+smaller share (~16%) than Pima's (~35%), reported plainly rather than
+picking whichever number looks best.
+
+Switching datasets also surfaced a second real bug, this time in the RAG
+backend rather than the model — see §13.5.
+
+## 14. References
+
+- CDC BRFSS 2015 Diabetes Health Indicators — UCI Machine Learning Repository #891 / Centers for Disease Control and Prevention Behavioral Risk Factor Surveillance System (U.S. government work, public domain). The project's active training source — see §13.7.
+- Pima Indians Diabetes Dataset — UCI Machine Learning Repository / National Institute of Diabetes and Digestive and Kidney Diseases. The project's original training source (§13.7); its target-leakage finding is preserved in [LEAKAGE.md](LEAKAGE.md).
+- CDC, "Diabetes Basics" — https://www.cdc.gov/diabetes/basics/ (U.S. government work, public domain)
+- WHO, "Diabetes" fact sheet — https://www.who.int/news-room/fact-sheets/detail/diabetes (© WHO; used with attribution under WHO's copyright/permissions policy: https://www.who.int/about/policies/publishing/copyright — not public domain)
+- LangGraph documentation — https://langchain-ai.github.io/langgraph/
+- Ollama — https://ollama.com

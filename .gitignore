@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+node_modules/
+dist/
+*.db
+
+# Secrets — real API keys live ONLY in backend/.env, which is never committed.
+# `.env` alone already matches at any depth; the explicit paths are here so the
+# intent is obvious to anyone reading this file.
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# Local model / vector-store artifacts (regenerate with the training script)
+backend/app/ml/artifacts/*.joblib
+backend/data/chroma/
+venv/
+.venv/
+.DS_Store
+backend/venv/

@@ -1,0 +1,82 @@
+{
+  "model_version": "screening-baseline-v3-brfss2015",
+  "scope": "educational_screening_only",
+  "source_dataset": "CDC BRFSS 2015 Diabetes Health Indicators (UCI ML Repository #891)",
+  "disclaimer": "Educational screening-risk baseline only, trained on 2015 CDC BRFSS self-reported survey data. Not a diagnostic tool. Self-reported survey data carries its own biases (recall accuracy, non-response, telephone-survey coverage) \u2014 see docs/ARCHITECTURE.md for details.",
+  "algorithm": "random_forest",
+  "feature_columns": [
+    "HighBP",
+    "HighChol",
+    "CholCheck",
+    "BMI",
+    "Smoker",
+    "Stroke",
+    "HeartDiseaseorAttack",
+    "PhysActivity",
+    "Fruits",
+    "Veggies",
+    "HvyAlcoholConsump",
+    "AnyHealthcare",
+    "NoDocbcCost",
+    "GenHlth",
+    "MentHlth",
+    "PhysHlth",
+    "DiffWalk",
+    "Sex",
+    "Age",
+    "Education",
+    "Income"
+  ],
+  "cross_validation": {
+    "logistic_regression": {
+      "mean_roc_auc": 0.8177370770639725,
+      "std_roc_auc": 0.002285908082980731
+    },
+    "random_forest": {
+      "mean_roc_auc": 0.8189609115477957,
+      "std_roc_auc": 0.0015771441273008029
+    }
+  },
+  "test_metrics": {
+    "accuracy": 0.7163749605802586,
+    "precision": 0.3297300175728207,
+    "recall": 0.774484052532833,
+    "f1": 0.46253828340927766,
+    "roc_auc": 0.8184822952753557
+  },
+  "feature_importances": {
+    "GenHlth": 0.24506093575097435,
+    "HighBP": 0.23630471400972985,
+    "BMI": 0.12821943232422806,
+    "HighChol": 0.11538179324562552,
+    "Age": 0.08989052832456151,
+    "DiffWalk": 0.05865618478270478,
+    "Income": 0.031139266168416415,
+    "HeartDiseaseorAttack": 0.02702432788887388,
+    "PhysHlth": 0.02279799794472245,
+    "PhysActivity": 0.008801074578253812,
+    "Education": 0.008735174120676334,
+    "CholCheck": 0.008060123479873562,
+    "HvyAlcoholConsump": 0.00579619641265134,
+    "Sex": 0.003458794978771091,
+    "Stroke": 0.003401584519010658,
+    "MentHlth": 0.0031433809362530997,
+    "Smoker": 0.001152193046004091,
+    "Veggies": 0.000875094441016163,
+    "Fruits": 0.0007536146928483389,
+    "AnyHealthcare": 0.0007334162460497023,
+    "NoDocbcCost": 0.0006141721087550446
+  },
+  "trained_at": "2026-08-26T18:14:01.440915+00:00",
+  "n_train": 202944,
+  "n_test": 50736,
+  "n_duplicate_rows_kept": 23899,
+  "risk_tier_thresholds": {
+    "low_max": 0.33,
+    "moderate_max": 0.66
+  },
+  "class_balance": {
+    "no_diabetes": 213703,
+    "prediabetes_or_diabetes": 39977
+  }
+}
