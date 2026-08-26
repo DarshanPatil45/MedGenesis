@@ -164,11 +164,17 @@ class TestTimelineEventTypeExtension:
         db_session.commit()
         db_session.refresh(patient)
 
+        # Phase 1 didn't yet define a lab_result payload shape (pure
+        # scaffolding); Phase 2 (docs/DIGITAL_TWIN.md) does, and validates
+        # it — see test_digital_twin_phase2.py for that validation's own
+        # test coverage. Using a payload that satisfies it here so this
+        # test keeps checking what it always checked: that the new event
+        # type is accepted end-to-end through the one twin service.
         event = twin_service.append_event(
             db_session,
             patient_id=patient.id,
             event_type="lab_result",
-            payload={"hba1c": 6.1},
+            payload={"test_name": "HbA1c", "value": 6.1},
             source="real",
         )
         assert event.event_type == "lab_result"

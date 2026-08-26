@@ -13,6 +13,13 @@ Three profiles ship deliberately:
     such population restriction (see app/models/patient.py), so the
     ineligibility path is now demonstrated with a data-completeness gap
     instead — a designed behaviour, not hidden as an error either way.
+
+Phase 2 (docs/DIGITAL_TWIN.md) extends "moderate_risk" with a synthetic
+HbA1c history and a medication_change event, so the expanded Digital Twin
+(GET /api/twin/{id}/digital-twin, GET /api/twin/{id}/labs/{test_name}) has
+a demo patient to actually show. `lab_history`/`medication_history` are
+optional per-profile keys — profiles that don't define them (lower_risk,
+incomplete_history) are completely unaffected, same generation as before.
 """
 
 from __future__ import annotations
@@ -54,6 +61,22 @@ DEMO_PROFILES: dict[str, dict[str, Any]] = {
             "education": 5, "income": 6,
             "height_m": 1.65, "weight_kg": 79.0,
         },
+        # Rising HbA1c over the same 6-month window as the measurement
+        # history above — a deliberately unremarkable, plausible trajectory,
+        # not tuned to hit any particular tier or threshold.
+        "lab_history": [
+            {"months_ago": 6, "test_name": "HbA1c", "value": 7.0, "unit": "%"},
+            {"months_ago": 3, "test_name": "HbA1c", "value": 7.4, "unit": "%"},
+            {"months_ago": 0, "test_name": "HbA1c", "value": 7.8, "unit": "%"},
+        ],
+        "medication_history": [
+            {
+                "months_ago": 4,
+                "medication_name": "Metformin",
+                "action": "started",
+                "dose": "500mg daily",
+            },
+        ],
     },
     "incomplete_history": {
         "pseudonym": "Demo Patient C (incomplete history)",
@@ -147,6 +170,28 @@ def create_demo_patient(
             payload=measurement,
             source="synthetic",
             recorded_at=recorded_at,
+        )
+
+    for lab in profile.get("lab_history", []):
+        months_ago, payload = lab["months_ago"], {k: v for k, v in lab.items() if k != "months_ago"}
+        twin_service.append_event(
+            db,
+            patient_id=patient.id,
+            event_type="lab_result",
+            payload=payload,
+            source="synthetic",
+            recorded_at=now - timedelta(days=30 * months_ago),
+        )
+
+    for med in profile.get("medication_history", []):
+        months_ago, payload = med["months_ago"], {k: v for k, v in med.items() if k != "months_ago"}
+        twin_service.append_event(
+            db,
+            patient_id=patient.id,
+            event_type="medication_change",
+            payload=payload,
+            source="synthetic",
+            recorded_at=now - timedelta(days=30 * months_ago),
         )
 
     return patient

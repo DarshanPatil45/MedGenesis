@@ -35,7 +35,11 @@ class PatientOut(BaseModel):
 
 
 class TimelineEventCreate(BaseModel):
-    event_type: Literal["measurement", "lifestyle_log", "note"]
+    # medication_change/lab_result added in Phase 2 (docs/DIGITAL_TWIN.md) —
+    # additive, the three original values remain valid and unchanged.
+    # screening/care_plan/chat stay excluded: those are written by agents,
+    # not posted directly through this endpoint.
+    event_type: Literal["measurement", "lifestyle_log", "note", "medication_change", "lab_result"]
     payload: dict[str, Any]
     source: Literal["real", "synthetic"] = "real"
     recorded_at: datetime | None = None
@@ -56,6 +60,30 @@ class TimelineOut(BaseModel):
     patient_id: int
     events: list[TimelineEventOut]
     current_state: dict[str, Any]
+
+
+class LabTrendOut(BaseModel):
+    """Response for GET /api/twin/{id}/labs/{test_name} — see
+    docs/DIGITAL_TWIN.md for why `trend` is only ever a plain description of
+    the recorded numbers, never a clinical judgement."""
+
+    test_name: str
+    latest: dict[str, Any] | None
+    history: list[dict[str, Any]]
+    trend: Literal["no_data", "insufficient_data", "stable", "increasing", "decreasing", "mixed"]
+
+
+class DigitalTwinOut(BaseModel):
+    """Response for GET /api/twin/{id}/digital-twin — the Phase 2 structured
+    view (docs/DIGITAL_TWIN.md). Additive: does not replace or change
+    GET /api/twin/{id}/timeline's response shape."""
+
+    patient: dict[str, Any]
+    clinical: dict[str, Any]
+    laboratory: dict[str, Any]
+    medications: dict[str, Any]
+    lifestyle: dict[str, Any]
+    timeline: list[dict[str, Any]]
 
 
 class SafetyOut(BaseModel):

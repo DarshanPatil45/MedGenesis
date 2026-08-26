@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.patient import Patient
-from app.schemas import TimelineEventCreate, TimelineEventOut, TimelineOut
+from app.schemas import DigitalTwinOut, LabTrendOut, TimelineEventCreate, TimelineEventOut, TimelineOut
 from app.services import twin as twin_service
 
 router = APIRouter(prefix="/api/twin", tags=["digital-twin"])
@@ -43,3 +43,20 @@ def get_timeline(patient_id: int, db: Session = Depends(get_db)):
         events=twin_service.get_timeline(db, patient_id),
         current_state=twin_service.get_current_state(db, patient_id),
     )
+
+
+@router.get("/{patient_id}/digital-twin", response_model=DigitalTwinOut)
+def get_digital_twin(patient_id: int, db: Session = Depends(get_db)):
+    """The Phase 2 structured Digital Twin view (docs/DIGITAL_TWIN.md) —
+    additive; does not change what /timeline returns."""
+    _require_patient(db, patient_id)
+    return DigitalTwinOut(**twin_service.get_structured_twin(db, patient_id))
+
+
+@router.get("/{patient_id}/labs/{test_name}", response_model=LabTrendOut)
+def get_lab_trend(patient_id: int, test_name: str, db: Session = Depends(get_db)):
+    """Latest value, full history, and a plain trend label for one lab test
+    (e.g. "HbA1c") — see docs/DIGITAL_TWIN.md for why `trend` never claims
+    more than the recorded numbers support."""
+    _require_patient(db, patient_id)
+    return LabTrendOut(**twin_service.get_lab_trend(db, patient_id, test_name))

@@ -153,7 +153,7 @@ backend described in §13.4. The system runs fully offline without it.
 ## 7. Data Model (SQLite)
 
 - **patients**: id, pseudonym, age, sex (`female`/`male`/`other`/`unspecified`), screening_eligible (bool, derived: `sex in ("female", "male")` — a structural check only; per-request data completeness is checked separately at scoring time, see §4.3), created_at
-- **timeline_events** *(the Digital Twin)*: id, patient_id (FK), event_type (`measurement`/`lifestyle_log`/`screening`/`care_plan`/`chat`/`note`), payload (JSON), recorded_at (timestamp), source (`real`/`synthetic`)
+- **timeline_events** *(the Digital Twin)*: id, patient_id (FK), event_type (`measurement`/`lifestyle_log`/`screening`/`care_plan`/`chat`/`note`/`medication_change`/`lab_result` — the last two added in Phase 2, §13.9), payload (JSON), recorded_at (timestamp), source (`real`/`synthetic`)
 - **screening_assessments**: id, patient_id (FK), timeline_event_id (FK), status (`scored`/`unavailable_for_profile`), risk_probability (nullable), risk_tier (nullable), unavailable_reason (nullable), top_features (JSON), model_version, scope (`educational_screening_only`), created_at
 - **simulations**: id, patient_id (FK), base_timeline_event_id (FK, the twin state it forked from), hypothesis (JSON), projected_trajectory (JSON list of `{week, risk_probability, risk_tier}`), created_at — simulations also require an eligible profile, same rule as screening
 - **care_plans**: id, patient_id (FK), screening_assessment_id (FK, nullable), simulation_id (FK, nullable), diet_focus, activity_target, monitoring_frequency, follow_up_weeks, narrative_text, sources (JSON), created_at
@@ -165,8 +165,10 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 ## 8. API Surface (FastAPI)
 
 - `POST /api/patients` — create a patient (or synthetic demo patient with a generated history)
-- `POST /api/twin/{patient_id}/events` — append a timeline event (measurement, lifestyle log, note)
+- `POST /api/twin/{patient_id}/events` — append a timeline event (measurement, lifestyle log, note, medication change, lab result)
 - `GET /api/twin/{patient_id}/timeline` — full timestamped history (the digital twin view)
+- `GET /api/twin/{patient_id}/digital-twin` *(Phase 2, §13.9)* — structured aggregate view: patient, clinical, laboratory, medications, lifestyle, timeline
+- `GET /api/twin/{patient_id}/labs/{test_name}` *(Phase 2, §13.9)* — latest value, full history, and trend label for one lab test (e.g. HbA1c)
 - `POST /api/screening/run` — Screening Risk Baseline Agent on current twin state → probability + tier + disclaimer, gated through Safety
 - `POST /api/simulate` — What-if Simulation Agent: `{patient_id, hypothesis}` → risk trajectory, gated through Safety
 - `POST /api/careplan/generate` — Care-Plan Agent (from a screening assessment or a simulation target)
@@ -532,6 +534,60 @@ be read as claiming otherwise.
   precedent of switching only when something is genuinely broken, not to
   match a spec's named technology list when the existing choice already
   satisfies the underlying requirement)
+
+### 13.9 MedGenesis extension: Phase 2 (Digital Twin lab/medication materialization)
+
+Phase 2 expanded the Digital Twin to represent laboratory results (HbA1c
+above all) and medication history, ahead of the future Clinical Analysis
+Agent and XGBoost phases needing richer input than the flat measurement
+fold. Full detail, including payload contracts, trend-labeling rules, and
+worked examples, lives in `docs/DIGITAL_TWIN.md` — this entry records what
+changed and why, matching the Phase 1 entry's format.
+
+**Implemented now:**
+
+- `services/twin.py` (the one Digital Twin service — no second one created)
+  gained `validate_lab_result_payload()` / `validate_medication_payload()`,
+  wired into `append_event()`, plus six new read functions:
+  `get_lab_history`, `get_latest_labs`, `get_lab_trend`,
+  `get_medication_history`, `get_current_medications`, and
+  `get_structured_twin` (a nested aggregate built purely from the existing
+  and new functions). `get_current_state()` is byte-for-byte unchanged —
+  confirmed by a dedicated backwards-compatibility test.
+- `schemas.TimelineEventCreate.event_type` widened to accept
+  `medication_change` and `lab_result` (additive `Literal` change; the
+  agent-internal types `screening`/`care_plan`/`chat` remain excluded from
+  direct API posts, unchanged).
+- Two new endpoints (§8): `GET /api/twin/{id}/digital-twin` and
+  `GET /api/twin/{id}/labs/{test_name}`. The existing `/timeline` endpoint's
+  response shape is unchanged.
+- `ml/synthetic_patients.py`'s `moderate_risk` demo profile gained a
+  synthetic 3-point HbA1c history and one Metformin `medication_change`
+  event, so the new endpoints have a demo patient to show. The other two
+  profiles are unaffected.
+- 52 new tests (`tests/test_digital_twin_phase2.py`,
+  `tests/test_digital_twin_api.py`) covering payload validation, trend
+  labeling (including a meta-test that no hardcoded clinical threshold
+  appears in the trend-labeling code), medication current/history folding,
+  the structured view, and API-level backwards compatibility.
+
+**Explicitly not implemented — planned for later phases:**
+
+- Any classification of a lab value or medication as clinically
+  significant, high/low/normal, or risk-relevant — the twin represents
+  recorded data only; interpretation is deferred to the Clinical Analysis
+  Agent (Phase 7)
+- Folding `lab_result`/`medication_change` into `get_current_state()`'s flat
+  fold — deliberately deferred (§13.8's reasoning still holds: this is a
+  modeling decision for whichever agent first needs it, not scaffolding)
+- Any ML feature transformer reading lab/medication history — the boundary
+  between the Digital Twin and a model's feature vector is documented in
+  `docs/DIGITAL_TWIN.md`, but the transformer itself belongs to the
+  XGBoost training phase (Phase 4), which has not started
+- `diabetes_type`, `diabetes_duration`, `daily_steps`, `diet_pattern`,
+  `sleep` — considered and deliberately not added; nothing in the current
+  architecture consumes them (see `docs/DIGITAL_TWIN.md`'s "Lifestyle
+  information" section for the full reasoning)
 
 ## 14. References
 
