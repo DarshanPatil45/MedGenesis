@@ -269,6 +269,10 @@ class ModelComparisonOut(BaseModel):
 class EvidenceSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     k: int | None = Field(default=None, ge=1, le=20)
+    # Phase 5: "local" preserves the exact pre-Phase-5 behavior and stays
+    # the default — a bare {"query": "..."} request is unaffected. "pubmed"
+    # and "all" opt into the new PubMed evidence source (docs/RAG.md).
+    source: Literal["local", "pubmed", "all"] = "local"
 
 
 class EvidenceSearchResultOut(BaseModel):
@@ -282,9 +286,12 @@ class EvidenceSearchResultOut(BaseModel):
     license: str
     attribution: str
     score: float
+    source_type: str
+    doi: str
 
 
 class EvidenceSearchOut(BaseModel):
     query: str
+    source: str
     backend: str
     results: list[EvidenceSearchResultOut]

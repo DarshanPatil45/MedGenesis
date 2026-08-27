@@ -160,13 +160,17 @@ class TestGeneratedTextNeverIndexed:
         """No code path anywhere calls collection.add() outside
         ChromaStore.__init__, and __init__ only ever receives `chunks` from
         load_chunks() — an LLM-generated chat reply or care-plan narrative
-        is never written back into the vector store."""
+        is never written back into the vector store.
+
+        Narrowed to `collection.add(` specifically (not a bare `.add(`
+        substring) since Phase 5's dedup logic legitimately calls Python
+        set.add() a few times — unrelated to the vector store."""
         import inspect
 
         from app.services import rag as rag_module
 
         source = inspect.getsource(rag_module)
-        assert source.count(".add(") == 1  # the one call, inside __init__
+        assert source.count("collection.add(") == 1  # the one call, inside __init__
 
 
 class TestPromptInjectionBoundary:

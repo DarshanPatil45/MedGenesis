@@ -14,16 +14,37 @@ attribution under WHO's permissions policy.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("medgenesis.rag")
 
 KB_DIR = Path(__file__).resolve().parents[2] / "data" / "knowledge_base"
 CHROMA_DIR = Path(__file__).resolve().parents[2] / "data" / "chroma"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 COLLECTION = "medgenesis_evidence"
+
+# Evidence source identifiers (Phase 5, docs/RAG.md "Multi-Source Evidence
+# Architecture"). LOCAL_SOURCE stays the default for every existing caller
+# — PubMed is opt-in only, never silently called (Phase 5 Step 12).
+LOCAL_SOURCE = "local"
+PUBMED_SOURCE = "pubmed"
+ALL_SOURCES = "all"
+VALID_SOURCES = (LOCAL_SOURCE, PUBMED_SOURCE, ALL_SOURCES)
+
+# Reciprocal Rank Fusion constant (Phase 5 Step 17) — the standard value
+# from the original RRF paper (Cormack et al., 2009); not tuned for this
+# corpus. Chosen over normalized-score fusion because PubMed's ESearch
+# provides no numeric relevance score at all, only a relevance-ranked PMID
+# list — RRF only needs rank position from each source, so it never has to
+# invent a comparable score for PubMed the way score-normalization fusion
+# would (docs/RAG.md "Ranking").
+RRF_K = 60
 # Bumped whenever a chunk's metadata *schema* changes (e.g. Phase 4 added
 # document_id) so an existing on-disk collection from before the change is
 # detected as stale and rebuilt — same mechanism already used for the
@@ -94,6 +115,12 @@ class EvidenceChunk:
     license: str
     attribution: str
     score: float = 0.0
+    # Phase 5 additions — both backwards-compatible defaults, so every
+    # existing local-KB chunk (and every existing call site/test) is
+    # unaffected: source_type defaults to "local", doi defaults to empty
+    # (the local KB has no DOIs; PubMed-derived chunks populate it).
+    source_type: str = LOCAL_SOURCE
+    doi: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +134,8 @@ class EvidenceChunk:
             "license": self.license,
             "attribution": self.attribution,
             "score": round(self.score, 4),
+            "source_type": self.source_type,
+            "doi": self.doi,
         }
 
     @property
@@ -119,15 +148,23 @@ class EvidenceChunk:
         structured, for a future Clinical Agent to attach to a specific
         claim (Claim -> Evidence ID -> Source). The short `citation`
         property above remains what chat/care-plan narratives use inline;
-        this is additive, not a replacement."""
-        return (
-            f"Title: {self.title}\n"
-            f"Source: {self.publisher}\n"
-            f"Document: {self.document_id}\n"
-            f"Section: {self.section}\n"
-            f"URL: {self.source_url or '(none)'}\n"
-            f"Retrieval score: {round(self.score, 4)}"
-        )
+        this is additive, not a replacement. PMID/DOI are included only
+        when actually present (PubMed-derived chunks) — never fabricated
+        for local KB chunks (Phase 5 Step 24)."""
+        lines = [
+            f"Title: {self.title}",
+            f"Source: {self.publisher}",
+            f"Document: {self.document_id}",
+        ]
+        if self.source_type == PUBMED_SOURCE:
+            lines.append(f"PMID: {self.document_id.split('#', 1)[-1]}")
+            if self.doi:
+                lines.append(f"DOI: {self.doi}")
+        else:
+            lines.append(f"Section: {self.section}")
+        lines.append(f"URL: {self.source_url or '(none)'}")
+        lines.append(f"Retrieval score: {round(self.score, 4)}")
+        return "\n".join(lines)
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
@@ -355,3 +392,147 @@ def get_store():
         # Missing optional deps, or a corrupt local Chroma dir — either way
         # the fallback keeps evidence retrieval working.
         return KeywordStore(chunks)
+
+
+# --- Phase 5: PubMed as a second evidence source (docs/RAG.md) ---
+#
+# PubMedArticle -> EvidenceChunk normalization, cross-source deduplication,
+# and Reciprocal Rank Fusion all live here — the existing evidence-retrieval
+# module — rather than in a new medical_evidence_service.py, per Phase 5
+# Step 10. The Evidence Agent and every existing caller keep calling
+# EvidenceAgent.retrieve()/search_evidence() exactly as before; only
+# `source="pubmed"` or `source="all"` opts into any of this.
+
+
+def _rank_to_score(rank: int) -> float:
+    """PubMed's ESearch returns PMIDs in relevance order but with no
+    numeric relevance score. Reciprocal rank (1/rank) turns that ordering
+    into a bounded (0, 1] value that's honestly rank-derived, not a
+    fabricated magnitude — and it's the same quantity Reciprocal Rank
+    Fusion below uses, so a standalone PubMed-only query and a fused
+    "all sources" query report `score` on one consistent basis."""
+    return 1.0 / rank
+
+
+def _pubmed_article_to_chunk(article: Any, rank: int) -> EvidenceChunk:
+    """PubMedArticle -> EvidenceChunk (Phase 5 Step 7). `accessed` is the
+    retrieval date (when MedGenesis actually fetched this record) — honest
+    for a live API response, unlike the local KB's frontmatter `accessed`
+    date which records when a human curator reviewed the source."""
+    return EvidenceChunk(
+        text=article.abstract or "",
+        document_id=f"pubmed#{article.pmid}",
+        section="Abstract",
+        title=article.title,
+        publisher=article.journal,
+        source_url=article.url,
+        accessed=datetime.now(timezone.utc).date().isoformat(),
+        license="",
+        attribution="",
+        score=_rank_to_score(rank),
+        source_type=PUBMED_SOURCE,
+        doi=article.doi or "",
+    )
+
+
+def _query_pubmed(query: str, k: int) -> list[EvidenceChunk]:
+    """Never raises — a PubMed failure (not configured, network error,
+    NCBI outage) degrades to "no PubMed evidence" exactly like the local
+    store already degrades ChromaDB init failures to the keyword fallback
+    (Phase 5 Step 15). Articles with no abstract are dropped here (Phase 5
+    Step 22): there is no text for them to contribute to a text-retrieval
+    result, though the underlying PubMedArticle metadata was still
+    genuinely fetched — this decision is `search_evidence`'s, not
+    `services/pubmed.py`'s, which returns everything it found."""
+    from app.services.pubmed import PubMedUnavailableError, get_pubmed_client
+
+    try:
+        articles = get_pubmed_client().search(query, max_results=k)
+    except (NotImplementedError, PubMedUnavailableError) as exc:
+        logger.warning("PubMed evidence source unavailable (%s) — continuing without it.", exc)
+        return []
+    return [_pubmed_article_to_chunk(a, rank) for rank, a in enumerate(articles, start=1) if a.abstract]
+
+
+def _normalize_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
+def _deduplicate(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
+    """Cross-source dedup (Phase 5 Step 16): same document_id (catches an
+    exact repeat, e.g. the same PMID appearing twice), same DOI, or the
+    same normalized title are treated as one piece of evidence — only the
+    first (highest fused-rank) occurrence is kept. Distinct studies on the
+    same topic are NOT deduplicated; only genuine same-record duplicates
+    are.
+
+    DOI/title matching is scoped to PubMed-origin chunks only. Local KB
+    chunks intentionally share one `title` per source document across many
+    distinct sections (e.g. every "Diabetes Basics" section has the same
+    title) — applying title-based dedup to them would wrongly collapse
+    unrelated sections into one. PubMed titles are one-per-article, so this
+    check is meaningful only there.
+    """
+    seen_ids: set[str] = set()
+    seen_dois: set[str] = set()
+    seen_pubmed_titles: set[str] = set()
+    out: list[EvidenceChunk] = []
+    for chunk in chunks:
+        if chunk.document_id in seen_ids:
+            continue
+        if chunk.source_type == PUBMED_SOURCE:
+            if chunk.doi and chunk.doi in seen_dois:
+                continue
+            title_key = _normalize_title(chunk.title)
+            if title_key and title_key in seen_pubmed_titles:
+                continue
+            if chunk.doi:
+                seen_dois.add(chunk.doi)
+            if title_key:
+                seen_pubmed_titles.add(title_key)
+        seen_ids.add(chunk.document_id)
+        out.append(chunk)
+    return out
+
+
+def _reciprocal_rank_fusion(
+    local_chunks: list[EvidenceChunk], pubmed_chunks: list[EvidenceChunk]
+) -> list[EvidenceChunk]:
+    """Merges two independently-ranked result lists into one ranking using
+    each item's RANK POSITION only (never a raw score) — see RRF_K's
+    definition above for why. A document_id present in both lists
+    accumulates both contributions, which also naturally dedupes an exact
+    document_id repeat before `_deduplicate` even runs."""
+    fused_scores: dict[str, float] = {}
+    chunk_by_id: dict[str, EvidenceChunk] = {}
+    for result_list in (local_chunks, pubmed_chunks):
+        for rank, chunk in enumerate(result_list, start=1):
+            fused_scores[chunk.document_id] = fused_scores.get(chunk.document_id, 0.0) + 1.0 / (RRF_K + rank)
+            chunk_by_id.setdefault(chunk.document_id, chunk)
+    ordered_ids = sorted(fused_scores, key=lambda doc_id: fused_scores[doc_id], reverse=True)
+    return [
+        EvidenceChunk(**{**chunk_by_id[doc_id].__dict__, "score": fused_scores[doc_id]})
+        for doc_id in ordered_ids
+    ]
+
+
+def search_evidence(query: str, k: int = DEFAULT_TOP_K, source: str = LOCAL_SOURCE) -> list[EvidenceChunk]:
+    """Multi-source evidence retrieval (Phase 5, docs/RAG.md). `source`
+    defaults to "local" — exactly today's behavior — so every existing
+    caller (ConversationalAgent, CarePlanAgent, the orchestrator's
+    evidence_node, all of which call EvidenceAgent.retrieve() with no
+    `source` argument) is completely unaffected; PubMed is opt-in only,
+    never silently called (Phase 5 Step 12)."""
+    if source not in VALID_SOURCES:
+        raise ValueError(f"Unknown evidence source {source!r}; expected one of {VALID_SOURCES}")
+
+    if source == LOCAL_SOURCE:
+        return get_store().query(query, k=k)
+    if source == PUBMED_SOURCE:
+        return _query_pubmed(query, k)[:k]
+
+    # source == ALL_SOURCES: retrieve from both, fuse by rank, dedupe.
+    local_chunks = get_store().query(query, k=k)
+    pubmed_chunks = _query_pubmed(query, k)
+    fused = _reciprocal_rank_fusion(local_chunks, pubmed_chunks)
+    return _deduplicate(fused)[:k]

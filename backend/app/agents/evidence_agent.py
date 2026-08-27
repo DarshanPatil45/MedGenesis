@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.rag import DEFAULT_TOP_K, EvidenceChunk, get_store
+from app.services.rag import DEFAULT_TOP_K, LOCAL_SOURCE, EvidenceChunk, get_store, search_evidence
 
 
 class EvidenceAgent:
     name = "EvidenceRetrievalAgent"
 
-    def retrieve(self, query: str, k: int = DEFAULT_TOP_K) -> list[EvidenceChunk]:
+    def retrieve(self, query: str, k: int = DEFAULT_TOP_K, source: str = LOCAL_SOURCE) -> list[EvidenceChunk]:
         """Returns ranked, relevance-thresholded evidence chunks for `query`
         — an empty list means no sufficiently relevant evidence was found
         (docs/RAG.md "Relevance threshold"), not an error. `query` should be
@@ -25,11 +25,18 @@ class EvidenceAgent:
         "Patient context boundary" / "Model output boundary") — every
         current caller (ConversationalAgent, CarePlanAgent, the
         orchestrator's evidence_node) already builds a short string from at
-        most a risk tier, never the full twin state."""
-        return get_store().query(query, k=k)
+        most a risk tier, never the full twin state.
 
-    def retrieve_as_dicts(self, query: str, k: int = DEFAULT_TOP_K) -> list[dict[str, Any]]:
-        return [c.to_dict() for c in self.retrieve(query, k=k)]
+        `source` defaults to "local" — the existing local knowledge base —
+        exactly as before Phase 5. Pass "pubmed" or "all" to opt into the
+        PubMed evidence source (docs/RAG.md "PubMed Integration"); every
+        existing caller above omits this argument and is unaffected."""
+        return search_evidence(query, k=k, source=source)
+
+    def retrieve_as_dicts(
+        self, query: str, k: int = DEFAULT_TOP_K, source: str = LOCAL_SOURCE
+    ) -> list[dict[str, Any]]:
+        return [c.to_dict() for c in self.retrieve(query, k=k, source=source)]
 
     @property
     def backend_name(self) -> str:

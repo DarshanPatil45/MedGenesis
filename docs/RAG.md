@@ -421,62 +421,369 @@ phase's own threshold calibration) and to honestly characterize both
 backends' current behavior, not enough to generalize a confident numeric
 score to a larger future corpus (e.g. once PubMed sources are added).
 
+## PubMed Integration (Phase 5)
+
+`app/services/pubmed.py` was Phase 1 scaffolding (a `PubMedClient` protocol
+and a `NotConfiguredPubMedClient` that raised `NotImplementedError` — see
+`docs/ARCHITECTURE.md` §13.8). Phase 5 added a real implementation,
+`EutilsPubMedClient`, behind the exact same protocol — no second client
+abstraction, and `PubMedArticle` (already real code since Phase 1) is
+extended, not replaced.
+
+**API used**: NCBI E-utilities, two endpoints, called in sequence for one
+`search(query, max_results)`:
+
+1. **ESearch** (`esearch.fcgi`, `retmode=json`) — `term=query` →
+   `esearchresult.idlist`, a list of PMIDs already ranked by relevance.
+   ESearch provides **no numeric relevance score**, rank order only — this
+   is what drove the ranking-strategy choice below.
+2. **EFetch** (`efetch.fcgi`, `retmode=xml`, `rettype=abstract`) —
+   `id={pmid1,pmid2,...}` → full article XML for those PMIDs in one batch
+   call (not one call per PMID). Results are re-ordered to match ESearch's
+   ranking, since EFetch doesn't guarantee it preserves input order.
+
+Both calls send `tool=medgenesis` and `email=PUBMED_EMAIL` (NCBI's usage
+policy asks for an identifying email on every request) and
+`api_key=PUBMED_API_KEY` only when set — the key stays optional, exactly
+as Phase 1's scaffolding comments already promised; it only raises the
+per-second rate limit.
+
+**Query flow**: `EvidenceAgent.retrieve(query, source="pubmed")` →
+`app/services/rag.py::_query_pubmed()` → `get_pubmed_client().search()` →
+ESearch → EFetch → `dict[pmid, PubMedArticle]` → re-ordered list →
+normalized to `EvidenceChunk` → returned. `get_pubmed_client()` returns
+`EutilsPubMedClient` when `PUBMED_EMAIL` is set, otherwise the same
+`NotConfiguredPubMedClient` as before — callers never see a different
+interface either way.
+
+**PMID handling**: PMIDs are treated as opaque strings throughout (never
+parsed as integers) — NCBI's own representation. `document_id` for a
+PubMed-derived chunk is `f"pubmed#{pmid}"`, so it can never collide with a
+local-KB `document_id` (`{file_stem}#{section-slug}`).
+
+**Metadata mapping** (`PubMedArticle`, extended this phase):
+
+| Field | Source | Notes |
+|---|---|---|
+| `pmid` | `<PMID>` | existing |
+| `title` | `<ArticleTitle>` | existing |
+| `journal` | `<Journal/Title>`, falls back to `<Journal/ISOAbbreviation>` | existing |
+| `year` | `<PubDate/Year>`, falls back to `<PubDate/MedlineDate>` | existing |
+| `authors` | `<AuthorList/Author>` → `"{LastName} {Initials}"`, falls back to `<CollectiveName>` for group-authored papers | existing |
+| `abstract` | `<Abstract/AbstractText>` — all sections joined; a `Label` attribute (e.g. `BACKGROUND`) is preserved inline as `"LABEL: text"` rather than fabricating a section split (see "EvidenceChunk mapping" below) | existing field, richer content |
+| `doi` | `<ArticleIdList/ArticleId IdType="doi">` | **new, Phase 5** |
+| `article_type` | `<PublicationTypeList/PublicationType>`, e.g. `["Review"]` | **new, Phase 5** |
+
+**Abstract handling (Step 22)**: if `<Abstract>` is absent or empty,
+`abstract` is `None` — never a placeholder string. `_query_pubmed()` then
+drops that article entirely rather than returning an `EvidenceChunk` with
+empty `text`: there is nothing for a text-retrieval system to rank or
+cite. The underlying `PubMedArticle` (with its real title/journal/PMID/DOI
+metadata, even without an abstract) is still what `EutilsPubMedClient.
+search()` itself returns — the "no chunk without text" decision is made
+one layer up, in `services/rag.py`, not inside the PubMed client.
+
+**Full text (Step 23)**: not implemented and not assumed. E-utilities'
+`efetch` with `rettype=abstract` returns title/abstract/metadata only —
+that is the actual access level available through this API without a
+separate, article-specific full-text license. No scraping, no bypassing
+access controls.
+
+**Article type (Step 21)**: preserved verbatim from
+`<PublicationTypeList>` when present (e.g. `["Review", "Journal Article"]`)
+— never inferred from the title, and no evidence-hierarchy ranking is
+built on top of it this phase.
+
+## EvidenceChunk mapping
+
+```
+PubMedArticle                          EvidenceChunk
+──────────────                         ─────────────
+pmid                        ────────►  document_id = f"pubmed#{pmid}"
+url (property)              ────────►  source_url
+title                       ────────►  title
+journal                     ────────►  publisher
+abstract or ""              ────────►  text
+doi or ""                   ────────►  doi
+(none — see below)          ────────►  section = "Abstract"  (fixed convention)
+(fetch time)                ────────►  accessed = today's date (ISO)
+(n/a)                       ────────►  license = "", attribution = ""
+rank in ESearch order       ────────►  score = 1 / rank   (reciprocal rank — see "Ranking")
+(fixed)                     ────────►  source_type = "pubmed"
+```
+
+**Section convention**: always `"Abstract"`, never `"Abstract:<subsection>"`.
+Structured NCBI abstracts (e.g. `BACKGROUND`/`METHODS`/`RESULTS`/
+`CONCLUSIONS` labels) are real and preserved — but *inline*, as
+`"BACKGROUND: ... METHODS: ..."` within one `text` field, rather than
+split into one `EvidenceChunk` per labeled subsection. This was a
+deliberate simplicity choice (Phase 5 Step 7 explicitly offers `"Abstract"`
+as the base convention and only asks for the finer `Abstract:<section>`
+split "if the actual article content supports such a distinction" as an
+optional escalation): splitting would multiply chunk count per article,
+add a second per-article fan-out concept alongside the local KB's
+per-document-section one, and — critically — break Reciprocal Rank
+Fusion's implicit one-chunk-per-source-unit assumption below. Structure is
+preserved in the text; it just isn't a second axis of chunking.
+
+`license`/`attribution` are left empty for PubMed chunks — unlike the
+local KB (CDC public-domain / WHO copyrighted-with-attribution, both
+declared in each file's frontmatter), there is no single blanket license
+string that applies to arbitrary PubMed abstracts, and inventing one would
+violate Step 6's "never invent a field" rule.
+
+## Source type
+
+`EvidenceChunk.source_type` (`"local"` default / `"pubmed"`) is the field
+Phase 5 Step 8 asked for — added directly to the existing `EvidenceChunk`
+dataclass with a backwards-compatible default, not a second evidence
+model. Every existing local-KB chunk (and every existing test/call site
+that constructs one without specifying it) is `"local"` automatically.
+
+## Multi-Source Evidence Architecture
+
+```
+                    EvidenceAgent.retrieve(query, k, source)
+                                    │
+                    source="local"   source="pubmed"   source="all"
+                          │                │                │
+                          ▼                ▼                ▼
+                   get_store().query   _query_pubmed    both, then:
+                   (ChromaStore or     (EutilsPubMedClient   Reciprocal Rank Fusion
+                    KeywordStore)       or gracefully        (by rank, not raw score)
+                          │             empty on failure)         │
+                          │                │                      ▼
+                          │                │              Cross-source dedup
+                          │                │              (document_id / DOI /
+                          │                │               PubMed-title only)
+                          ▼                ▼                      ▼
+                    list[EvidenceChunk], all normalized, citation-preserved
+```
+
+All of this lives in `app/services/rag.py` — the existing evidence-
+retrieval module — not a new `medical_evidence_service.py` (Phase 5
+Step 10). `EvidenceAgent` (`app/agents/evidence_agent.py`) remains the
+single Evidence Agent; it gained one new parameter
+(`source: str = "local"`) on `retrieve()`/`retrieve_as_dicts()`, nothing
+else changed about it.
+
+## Source selection
+
+`source` ∈ `{"local", "pubmed", "all"}`, default `"local"`:
+
+- **`"local"`** (default): identical to pre-Phase-5 behavior. Every
+  existing caller (`ConversationalAgent`, `CarePlanAgent`, the
+  orchestrator's `evidence_node`) calls `EvidenceAgent.retrieve()`/
+  `search_evidence()` without a `source` argument and is completely
+  unaffected — regression-tested in `tests/test_multi_source_evidence.py::
+  TestSourceSelection::test_default_source_is_local_and_unchanged` and
+  `test_pubmed_never_called_for_default_local_source`.
+- **`"pubmed"`**: PubMed only. A configuration or network failure degrades
+  to an empty list, never an exception (see "Failure behavior" below).
+- **`"all"`**: both sources, fused by Reciprocal Rank Fusion and
+  deduplicated (see "Ranking"/"Deduplication").
+
+Nothing in this project *automatically* upgrades an existing caller from
+`"local"` to `"pubmed"`/`"all"` — that remains a decision for whichever
+future phase builds the Clinical Analysis Agent (Phase 5 Step 12/37: this
+phase explicitly does not wire PubMed into the Digital Twin or any
+existing agent's default behavior).
+
+## Deduplication
+
+`app/services/rag.py::_deduplicate()`. Same `document_id`, same DOI, or
+the same normalized title are treated as one piece of evidence — only the
+highest-ranked occurrence survives. DOI/title matching is scoped to
+PubMed-origin chunks only: local KB chunks intentionally share one `title`
+per source document across many distinct sections (every "Diabetes
+Basics" section has the title "Diabetes Basics"), so applying title-based
+dedup universally would wrongly collapse unrelated local sections into
+one. This exact failure mode is regression-tested
+(`test_local_chunks_sharing_one_document_title_are_never_collapsed`).
+Distinct studies discussing the same topic are never deduplicated — only
+genuine same-record duplicates are (Phase 5 Step 16).
+
+## Ranking
+
+`source="all"` merges two independently-ranked lists using **Reciprocal
+Rank Fusion (RRF)**, not raw score blending. Formula, per candidate
+document *d*: `score(d) = Σ 1/(60 + rank_s(d))` summed over every source
+*s* where *d* appears, `rank_s(d)` its 1-indexed position in that source's
+own result list. 60 is the constant from the original RRF paper (Cormack
+et al., 2009) — not tuned for this corpus.
+
+**Why RRF and not normalized-score fusion**: ChromaDB's cosine similarity
+and PubMed's relevance ranking are not on a comparable scale — and
+ESearch provides no numeric score at all, only a rank-ordered PMID list.
+Any score-normalization approach would have to *invent* a plausible-
+looking numeric score for PubMed results to blend with Chroma's real
+cosine values; RRF sidesteps that entirely by using only rank position,
+which both sources genuinely have. This is the "simplest defensible
+method" Phase 5 Step 17 asks for, chosen specifically to avoid fabricating
+a comparability that doesn't exist.
+
+A standalone `source="pubmed"` query (no fusion involved) reports `score`
+as plain reciprocal rank (`1/rank`) — the same underlying quantity RRF
+uses — rather than inventing a different, one-off scoring scheme for the
+single-source case.
+
+## Failure behavior (local RAG survives PubMed failure)
+
+`_query_pubmed()` never raises. `NotImplementedError` (PubMed not
+configured) and `PubMedUnavailableError` (network failure, NCBI 5xx/429
+after one retry, malformed JSON) are both caught and logged, and treated
+identically to "PubMed found nothing relevant" — an empty list. For
+`source="all"`, this means local results are always returned even when
+PubMed is completely unreachable
+(`test_pubmed_failure_does_not_break_local_results_in_all_mode`). For
+`source="pubmed"` alone, an unreachable PubMed returns an empty result
+list with HTTP 200 (not a 503) — consistent with this project's existing
+"empty means no evidence, not a crash" convention for every other
+retrieval path. **PubMed evidence is never fabricated to paper over a
+failure** — the alternative to "found nothing" is always "found nothing,"
+never a made-up citation.
+
+## Rate limiting / retries
+
+One retry only, after a fixed 1-second delay, for a transient failure
+(connection error, HTTP 5xx, HTTP 429) — never a retry loop. A genuine
+client error (e.g. HTTP 400) is not retried at all, since retrying an
+already-malformed request just fails the same way again
+(`EutilsPubMedClient._get()`). `search()` makes exactly two HTTP calls per
+invocation (one ESearch, one EFetch, batched across all requested PMIDs in
+that single EFetch call rather than one call per article) — there is no
+loop that could accidentally hammer NCBI.
+
+## Caching
+
+**Not implemented — a deliberate decision, not an oversight.** This is an
+educational prototype with low expected query volume; the two-call,
+no-loop request pattern above already respects NCBI's rate limits without
+needing a cache to avoid violating them at this usage scale; and there is
+no existing caching infrastructure in this project to extend (adding one
+now would be new architecture introduced without a concrete driving need
+— the same reasoning `docs/DIGITAL_TWIN.md` already used to decline adding
+speculative fields). If a future phase's Clinical Agent starts issuing
+many repeated PubMed queries, caching should be added then, sized and
+scoped to that actual access pattern.
+
+## Full-text limitations
+
+See "PubMed Integration" → "Full text" above: abstract + metadata only,
+by the E-utilities API's own scope — no full-text guarantee, and this
+project does not attempt to work around that.
+
+## Privacy boundary
+
+No call site in this codebase constructs a PubMed query from patient data
+at all — Phase 5 does not wire PubMed into `ConversationalAgent`,
+`CarePlanAgent`, or the orchestrator (all three still call
+`EvidenceAgent.retrieve()` with no `source` argument, defaulting to
+`"local"`, exactly as before). The only ways to reach `source="pubmed"`/
+`"all"` right now are a direct `EvidenceAgent.retrieve()` call or
+`POST /api/evidence/search` — both take a caller-supplied `query` string
+with no automatic patient-data injection. Tested with generic clinical
+queries only (e.g. "type 2 diabetes physical activity prevention"), per
+Phase 5 Step 27. A future Clinical Analysis Agent, when built, is
+responsible for constructing an appropriately de-identified clinical
+query from the Digital Twin before ever calling `source="pubmed"` — that
+boundary is explicitly not this phase's to build (Phase 5 Step 37).
+
+## Logging
+
+`app/services/pubmed.py` logs endpoint, HTTP status, latency, and (on
+success) an approximate query-length signal — never the full query text,
+never `PUBMED_API_KEY`, never patient data
+(`tests/test_pubmed.py::TestNoAPIKeyLoggedOrHardcoded::
+test_api_key_not_logged` regression-guards the key specifically).
+
+## Evaluation (PubMed / multi-source)
+
+**Not extended this phase, and documented as a deliberate scope
+boundary, not an oversight.** Phase 5 Step 31 explicitly requires either
+live PubMed access or a recorded, clearly-labelled fixture set with
+non-fabricated expected PMIDs to build a PubMed retrieval evaluation set —
+and Step 32's multi-source evaluation depends on that same data. This
+phase *did* verify live PubMed access works (see "Live verification"
+below) and confirmed the full pipeline returns real, correctly-normalized
+results — but building a *trustworthy* expected-PMID ground truth set
+requires deciding, for a handful of real clinical queries, which of
+NCBI's actual (and can change over time as its index updates) results
+should count as "correct" — a judgment call requiring domain expertise
+this phase does not have grounds to make up. Fabricating expected PMIDs to
+produce a Hit Rate/MRR number would be exactly the "manufactured
+impressive numbers" Step 24/32 explicitly prohibit. The existing local-KB
+evaluation set and its measured numbers (`## Evaluation` above) are
+unchanged and remain valid for the local-only path.
+
+## Live verification
+
+A live, network-based smoke test was run against the real NCBI API during
+this phase's development (not part of the required test suite —
+`tests/test_pubmed_live.py`, skipped unless explicitly opted into). It
+succeeded: a real query ("type 2 diabetes physical activity") returned
+real PMIDs, titles, journals, and DOIs — e.g. PMID 42654187, "Association
+Between Prudent Dietary Pattern and Cardiometabolic Indicators in a
+Healthy Qatari Population: Evidence from the Qatar Biobank (QBB)",
+*Nutrients*, DOI 10.3390/nu18162607. This confirms the ESearch → EFetch →
+`PubMedArticle` → `EvidenceChunk` pipeline genuinely works end to end
+against the live API, not just against mocked responses. These specific
+PMIDs are **live query results observed during development, not a
+recorded fixture and not an evaluation ground truth** — real papers
+matching a real query at the time this phase was built, not something to
+assert on in the test suite (NCBI's index changes over time).
+
+## Performance
+
+Approximate, measured during live verification (not a rigorous benchmark
+— see "Do not optimize prematurely," Step 33):
+
+- **Local retrieval** (`KeywordStore`/`ChromaStore`): sub-100ms, as
+  already characterized in Phase 4.
+- **PubMed retrieval** (`source="pubmed"`, 2 results): ~1-2 seconds for
+  the ESearch + EFetch round trip to NCBI — dominated entirely by network
+  latency, not by this project's own code.
+- **Combined (`source="all"`)**: local and PubMed queries run
+  **sequentially, not in parallel** — a deliberate choice, not an
+  oversight. The local store is fast enough (sub-100ms) that its
+  contribution to total latency is negligible next to PubMed's ~1-2
+  seconds; introducing threading/async here would be the *first*
+  concurrency primitive in an otherwise fully synchronous codebase (no
+  other part of MedGenesis uses asyncio or a thread pool), a materially
+  bigger architectural footprint than the sub-100ms it would save. If
+  PubMed latency becomes a real bottleneck for a future caller, this
+  should be revisited then, against that caller's actual requirements.
+
 ## Limitations
 
-- **Corpus size**: 2 documents, 17 chunks — CDC "Diabetes Basics" and one
-  WHO fact sheet. No original medical literature, no PubMed, no clinical
-  guidelines beyond these two general-education sources.
-- **No external literature**: everything retrievable today is general
-  public-health education content, not primary research.
-- **No clinical reasoning**: the Evidence Agent retrieves; nothing
-  synthesizes retrieved evidence into a clinical judgment (that's the
-  future Clinical Analysis Agent, `docs/ARCHITECTURE.md` §13.8/§13.9, not
-  built).
-- **No clinical validation**: retrieval quality (Hit Rate@k, MRR above) is
-  an information-retrieval measurement, not a clinical-accuracy one.
-- **English-only, static corpus**: no live updates, no multi-language
-  support.
-- **Prompt-injection testing scope**: verified the boundary is correctly
-  constructed (delimiters, system-prompt framing, structural non-execution
-  in the fallback path) — not a live-model adversarial red-team, which
-  needs a reachable LLM backend and is out of this phase's scope.
-
-## Future PubMed extension (Phase 5+, not built now)
-
-The Evidence Agent's interface (`retrieve()` returning `list[EvidenceChunk]`)
-was already source-agnostic before this phase — nothing in it assumes
-"local markdown file." The intended future shape:
-
-```
-Evidence Sources
-    ├── Local RAG   (this phase — ChromaStore/KeywordStore over data/knowledge_base/)
-    └── PubMed      (Phase 5 — app/services/pubmed.py, currently a scaffolded
-                      stub per docs/ARCHITECTURE.md §13.8; NOT called this phase)
-```
-
-Both would need to produce the same normalized `EvidenceChunk` shape so
-`EvidenceAgent.retrieve()`'s callers (chat, care plan, orchestrator, the
-new `/api/evidence/search` endpoint) never need to know which source
-answered a given query. Concretely, for whoever builds Phase 5:
-
-- `app/services/pubmed.py::PubMedArticle` (already real, working code —
-  only retrieval is stubbed) would need a small adapter to
-  `EvidenceChunk` — `document_id` maps naturally to `f"pubmed#{pmid}"`,
-  `source_url` to `PubMedArticle.url` (already a real property), `title`/
-  `publisher` (as "PubMed"/the journal name) map directly; `section` has
-  no PubMed equivalent and would need a documented convention (e.g.
-  "Abstract").
-- `get_store()`'s try-a-backend-then-fall-back pattern is the existing
-  precedent for combining multiple sources behind one interface — a
-  Phase 5 `MultiSourceStore` (or similar) could query both `ChromaStore`
-  and a real `PubMedClient` and merge+re-rank results, without either
-  `EvidenceAgent` or its three callers changing at all.
-- The relevance-threshold and citation-preservation work this phase did is
-  what a PubMed source would need to meet too — real DOI/PMID/author
-  fields would populate real values instead of the empty-string
-  placeholders `EvidenceChunk` currently carries for fields the local KB
-  doesn't have (Step 6: never invent them; PubMed responses would actually
-  provide them for real, once implemented).
-
-None of this was implemented — `services/pubmed.py` was not touched, no
-live PubMed call was made, per this phase's explicit constraints.
+- **Corpus size**: local KB is still 2 documents, 17 chunks. PubMed
+  extends reach to the live literature, but only when explicitly
+  requested (`source="pubmed"`/`"all"`) — the default remains the small
+  local corpus.
+- **No clinical reasoning**: the Evidence Agent retrieves and normalizes;
+  nothing synthesizes retrieved evidence (local or PubMed) into a clinical
+  judgment (the future Clinical Analysis Agent, `docs/ARCHITECTURE.md`
+  §13.8/§13.9, still not built).
+- **No clinical validation**: neither the local Hit Rate@k/MRR numbers nor
+  PubMed's real, live retrieval quality have been clinically validated —
+  both are information-retrieval measurements, not medical-accuracy ones.
+- **No evidence grading**: `article_type` (e.g. "Review", "Randomized
+  Controlled Trial") is preserved verbatim where NCBI provides it, but
+  nothing ranks or weights evidence by study design/quality — no
+  evidence-hierarchy logic was built (Phase 5 Step 19/21 explicitly
+  prohibit inventing one).
+- **Abstract/metadata only**: no full-text access, by the E-utilities
+  API's own scope (see "Full-text limitations").
+- **Network dependency**: PubMed retrieval requires live network access to
+  NCBI; unavailable in an offline/air-gapped deployment (degrades to
+  empty PubMed results, never fabricated ones — see "Failure behavior").
+- **Rate limits**: NCBI allows ~3 requests/second without an API key, ~10
+  with one — not a practical constraint at this prototype's expected
+  query volume (2 calls per `search()`, no loop), but would need real
+  attention under sustained concurrent load.
+- **No PubMed retrieval evaluation set**: see "Evaluation (PubMed /
+  multi-source)" above — deliberately not built this phase rather than
+  built on fabricated ground truth.
+- **Prompt-injection testing scope** (unchanged from Phase 4): verified
+  the boundary is correctly constructed, not a live-model adversarial
+  red-team.

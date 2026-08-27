@@ -177,7 +177,7 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 - `GET /api/safety/audit-log` — read the safety review audit trail (admin/grading view)
 - `GET /api/ml/comparison` *(Phase 3, §13.10)* — actual measured RandomForest-vs-XGBoost test metrics, computed live from both persisted artifacts
 - `POST /api/ml/xgboost/predict` *(Phase 3, §13.10)* — scores a patient's twin state with the XGBoost candidate model; comparison-only, not Safety-gated, not the production model
-- `POST /api/evidence/search` *(Phase 4, §13.11)* — direct query into the Evidence Agent/RAG store; read-only, not Safety-gated (retrieves fixed, pre-vetted CDC/WHO content, not generated text)
+- `POST /api/evidence/search` *(Phase 4/5, §13.11/§13.12)* — direct query into the Evidence Agent/RAG store; read-only, not Safety-gated (retrieves fixed, pre-vetted CDC/WHO content or live PubMed metadata, not generated text). `source` (`local`/`pubmed`/`all`, default `local`) added in Phase 5 — backwards compatible, existing `{"query": "..."}` requests unaffected
 - `GET /api/health` — liveness check
 
 ## 9. Frontend Pages
@@ -743,6 +743,93 @@ matching the Phase 1-3 entries' format.
   sufficient for this corpus; not built without a demonstrated need.
 - MCP tool exposure (`search_medical_evidence`) — still deferred to
   Phase 13 of the original MedGenesis phase list (§13.8).
+
+### 13.12 MedGenesis extension: Phase 5 (PubMed integration and multi-source evidence)
+
+Phase 5 turned the Phase 1 PubMed scaffolding (§13.8) into a real NCBI
+E-utilities client and added it as a second, opt-in evidence source
+alongside the existing local RAG — no second Evidence Agent, no second
+`EvidenceChunk` abstraction. Full methodology, real measured/observed
+results, and the multi-source architecture live in `docs/RAG.md` — this
+entry records what changed and what's still deliberately absent, matching
+the Phase 1-4 entries' format.
+
+**Implemented now:**
+
+- `app/services/pubmed.py::EutilsPubMedClient` — real ESearch + EFetch
+  calls behind the existing `PubMedClient` protocol; `PubMedArticle`
+  extended with `doi` and `article_type` (both new, backwards-compatible
+  defaults). One retry only, after a fixed delay, for a transient failure
+  — never a retry loop. Verified against the live NCBI API during
+  development (not part of the required test suite — see
+  `tests/test_pubmed_live.py`, skipped by default).
+- A real, order-dependent secret-logging leak was found and fixed during
+  this phase's own test development: httpx's own request-line logger
+  (independent of anything `services/pubmed.py` logs itself) includes the
+  full request URL — `api_key` included, since NCBI requires it as a query
+  parameter — at INFO level by default. Since `app/main.py` already raises
+  the root logger to INFO on startup, this would have leaked the key into
+  real application logs. Fixed by capping `logging.getLogger("httpx")` at
+  WARNING at import time; regression-tested directly
+  (`tests/test_pubmed.py::TestNoAPIKeyLoggedOrHardcoded::
+  test_httpx_request_logger_is_capped_at_warning`).
+- `EvidenceChunk` gained two backwards-compatible fields:
+  `source_type` (`"local"`/`"pubmed"`, defaults to `"local"`) and `doi`
+  (defaults to `""`) — no second evidence model.
+- `app/services/rag.py::search_evidence(query, k, source)` — the
+  multi-source orchestration layer, added to the existing RAG module (not
+  a new `medical_evidence_service.py`). `source="local"` (the default)
+  is byte-for-byte identical to pre-Phase-5 behavior; `"pubmed"` and
+  `"all"` are opt-in only. PubMed→EvidenceChunk normalization, cross-
+  source deduplication (by document_id/DOI/PubMed-title, deliberately
+  scoped away from local-KB titles — see `docs/RAG.md` for the specific
+  collision bug this avoids), and Reciprocal Rank Fusion (chosen over
+  score-normalization fusion because PubMed's ESearch provides no numeric
+  relevance score, rank order only) all live here.
+- `EvidenceAgent.retrieve()`/`retrieve_as_dicts()` gained one new
+  `source` parameter; every existing caller (`ConversationalAgent`,
+  `CarePlanAgent`, the orchestrator's `evidence_node`) omits it and is
+  unaffected.
+- `POST /api/evidence/search` gained an optional `source` field
+  (`"local"`/`"pubmed"`/`"all"`, default `"local"`) — additive, backwards
+  compatible.
+- A PubMed failure (not configured, network error, NCBI outage) degrades
+  to an empty result set, never an exception and never fabricated
+  evidence — local RAG is unaffected even in `source="all"` mode.
+- 61 new tests across `tests/test_pubmed.py`, `tests/
+  test_multi_source_evidence.py`, and additions to `tests/
+  test_evidence_api.py` — all mocked (`httpx.MockTransport`), no live
+  PubMed dependency for the required suite.
+
+**Explicitly not implemented — planned for later phases:**
+
+- Wiring PubMed into `ConversationalAgent`, `CarePlanAgent`, or the
+  orchestrator — all three still default to `source="local"`; deciding
+  when a real caller should query PubMed is the future Clinical Analysis
+  Agent's job, per its own explicit constraint this phase (Phase 5
+  Step 12/37)
+- A PubMed/multi-source retrieval evaluation set — Step 31 requires either
+  live access (which this phase confirmed works) or a recorded, clearly-
+  labelled fixture set with non-fabricated expected PMIDs; building a
+  trustworthy expected-PMID ground truth requires a domain-expert
+  judgment call this phase has no grounds to make, so it was left
+  undone rather than built on invented "expected" results (`docs/RAG.md`
+  "Evaluation (PubMed / multi-source)")
+- Caching of PubMed results — evaluated and deliberately not built; no
+  existing caching infrastructure to extend, and this prototype's query
+  volume doesn't need one yet (`docs/RAG.md` "Caching")
+- Parallel local+PubMed retrieval for `source="all"` — evaluated and
+  deliberately kept sequential; the local store's contribution to total
+  latency is negligible next to PubMed's network round trip, and
+  introducing async/threading here would be the first concurrency
+  primitive in an otherwise fully synchronous codebase
+- Full-text retrieval, evidence-quality/study-design grading, or any
+  causal/hierarchy claim about article types — outside E-utilities'
+  actual scope or explicitly prohibited by this phase's own constraints
+- The Clinical Analysis Agent, MCP, or any change to the RandomForest/
+  XGBoost models or the Digital Twin — all explicitly out of scope this
+  phase and confirmed untouched (no file under `app/ml/` or
+  `app/services/twin.py` changed)
 
 ## 14. References
 
