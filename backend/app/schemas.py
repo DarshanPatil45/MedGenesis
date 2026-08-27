@@ -259,3 +259,32 @@ class ModelComparisonOut(BaseModel):
     xgboost: ModelMetricsOut
     metrics_table: dict[str, dict[str, float]]
     n_test: int
+
+
+# --- Phase 4: evidence retrieval (docs/RAG.md) ---
+# The existing EvidenceAgent/RAG service, not a new retrieval system —
+# these schemas just expose it over its own dedicated endpoint.
+
+
+class EvidenceSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000)
+    k: int | None = Field(default=None, ge=1, le=20)
+
+
+class EvidenceSearchResultOut(BaseModel):
+    text: str
+    document_id: str
+    section: str
+    title: str
+    publisher: str
+    source_url: str
+    accessed: str
+    license: str
+    attribution: str
+    score: float
+
+
+class EvidenceSearchOut(BaseModel):
+    query: str
+    backend: str
+    results: list[EvidenceSearchResultOut]

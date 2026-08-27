@@ -68,7 +68,7 @@ class CarePlanAgent:
 
         evidence = get_evidence_agent()
         query = f"type 2 diabetes {risk_tier or ''} risk lifestyle diet physical activity monitoring"
-        chunks = evidence.retrieve(query, k=3)
+        chunks = evidence.retrieve(query)
 
         deterministic = self._deterministic_narrative(plan, risk_tier, screening_status, chunks)
         narrative, generated_by = deterministic, "rules"

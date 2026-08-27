@@ -177,6 +177,7 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 - `GET /api/safety/audit-log` — read the safety review audit trail (admin/grading view)
 - `GET /api/ml/comparison` *(Phase 3, §13.10)* — actual measured RandomForest-vs-XGBoost test metrics, computed live from both persisted artifacts
 - `POST /api/ml/xgboost/predict` *(Phase 3, §13.10)* — scores a patient's twin state with the XGBoost candidate model; comparison-only, not Safety-gated, not the production model
+- `POST /api/evidence/search` *(Phase 4, §13.11)* — direct query into the Evidence Agent/RAG store; read-only, not Safety-gated (retrieves fixed, pre-vetted CDC/WHO content, not generated text)
 - `GET /api/health` — liveness check
 
 ## 9. Frontend Pages
@@ -669,6 +670,79 @@ Phase 1/Phase 2 entries' format.
   Agent, MCP, frontend, database/framework migrations)
 - MCP tool exposure for either model — still deferred to Phase 13 of the
   original MedGenesis phase list (§13.8)
+
+### 13.11 MedGenesis extension: Phase 4 (medical evidence RAG and citation grounding)
+
+Phase 4 audited and strengthened the one existing RAG implementation
+(`app/services/rag.py`, `app/agents/evidence_agent.py`) — no second RAG
+system, no second Evidence Agent, no PubMed integration. Full audit,
+methodology, and actual measured retrieval numbers live in `docs/RAG.md` —
+this entry records what changed and what's still deliberately absent,
+matching the Phase 1-3 entries' format.
+
+**Implemented now:**
+
+- **`document_id`** added to `EvidenceChunk` — a stable, citable identifier
+  (`{file}#{section-slug}`), propagated through both the keyword and Chroma
+  backends (Chroma's collection metadata schema was version-bumped so an
+  old on-disk collection is detected as stale and rebuilt, same mechanism
+  as the earlier cosine-space fix, §13.5).
+- **Centralized `DEFAULT_TOP_K = 3`** (`app/services/rag.py`) — the three
+  existing call sites that each hard-coded `k=3` now share one constant.
+- **Per-backend relevance thresholds**
+  (`ChromaStore.MIN_RELEVANCE_SCORE = 0.15`,
+  `KeywordStore.MIN_RELEVANCE_SCORE = 0.5`), empirically calibrated against
+  this project's actual corpus and embedding model — an unmet threshold now
+  returns "no sufficiently relevant evidence," not the nearest chunks
+  regardless of relevance. The first calibration attempt (using only 5 easy
+  probe queries) was too aggressive and broke an existing regression test
+  for hard-paraphrase queries; caught by the test suite and corrected
+  before being kept — see `docs/RAG.md`'s "Relevance threshold" section for
+  the full before/after measurement.
+- **`EvidenceChunk.citation_block`** / **`EvidenceAgent.
+  format_citation_block()`** — the `[E1]/[E2]…` structured citation format,
+  additive alongside the existing inline `citation` string.
+- **Prompt-injection data/instruction boundary**
+  (`app/agents/conversational_agent.py`) — explicit delimiters around the
+  retrieved-sources block plus a system-prompt instruction that delimited
+  text is never an instruction to obey. The only agent this applies to:
+  `CarePlanAgent`'s LLM call never sees retrieved chunk text at all (it
+  only rephrases an already-decided plan).
+- **`app/services/retrieval_evaluation.py`** *(new)* — a 14-query
+  deterministic evaluation set (every `expected_document_id` verified to
+  exist in the real 17-chunk corpus) and Hit Rate@k/Precision@k/Recall@k/
+  MRR. Measured, not fabricated: ChromaStore 14/14 hit rate (MRR 0.929),
+  KeywordStore 12/14 (MRR 0.821) — a real, reproducible demonstration of
+  the semantic backend's advantage on hard paraphrases.
+- **`POST /api/evidence/search`** (`app/routers/evidence.py`) — the first
+  direct API access to the Evidence Agent, independent of chat/care-plan/
+  orchestrator; read-only, not Safety-gated, not persisted.
+- 34 new tests (`tests/test_rag_boundaries.py`, `tests/test_evidence_api.py`)
+  covering citation/metadata preservation, deduplication, the patient-
+  context and model-output boundaries (both verified structurally, not
+  just by convention), the prompt-injection boundary (with a clearly-
+  labelled synthetic fixture, never a fabricated real source), and the
+  evaluation module itself.
+
+**Explicitly not implemented — planned for later phases:**
+
+- Any live PubMed call, or touching `app/services/pubmed.py` at all — still
+  Phase 5, per its own explicit constraint this phase. `docs/RAG.md`'s
+  "Future PubMed extension" section documents exactly where it would plug
+  into the now-strengthened `EvidenceChunk`/`EvidenceAgent` interface.
+- The Clinical Analysis Agent — `format_citation_block()` produces what a
+  future claim-to-citation mapping would need as input; nothing consumes
+  it yet.
+- A formal structured query object (`{question, topic, patient_context,
+  model_context}`) — considered and deliberately not built, since every
+  current caller already respects the patient-context/model-output
+  boundaries with a plain string; see `docs/RAG.md`'s "Patient context
+  boundary" section for the reasoning.
+- Hybrid (keyword + semantic) retrieval — the existing single-backend
+  design (semantic preferred, deterministic keyword fallback) was found
+  sufficient for this corpus; not built without a demonstrated need.
+- MCP tool exposure (`search_medical_evidence`) — still deferred to
+  Phase 13 of the original MedGenesis phase list (§13.8).
 
 ## 14. References
 

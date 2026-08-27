@@ -114,7 +114,7 @@ def build_graph(db: Session):
         agent = get_evidence_agent()
         tier = (state.get("screening") or {}).get("risk_tier")
         query = f"type 2 diabetes {tier or 'general'} risk prevention diet activity monitoring"
-        chunks = agent.retrieve_as_dicts(query, k=3)
+        chunks = agent.retrieve_as_dicts(query)
         return {
             "evidence": chunks,
             "trace": _trace(

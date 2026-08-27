@@ -24,6 +24,16 @@ KB_DIR = Path(__file__).resolve().parents[2] / "data" / "knowledge_base"
 CHROMA_DIR = Path(__file__).resolve().parents[2] / "data" / "chroma"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 COLLECTION = "medgenesis_evidence"
+# Bumped whenever a chunk's metadata *schema* changes (e.g. Phase 4 added
+# document_id) so an existing on-disk collection from before the change is
+# detected as stale and rebuilt — same mechanism already used for the
+# cosine-space migration below.
+SCHEMA_VERSION = "2"
+
+# Centralized so every caller (EvidenceAgent, ConversationalAgent,
+# CarePlanAgent, the orchestrator's evidence_node) gets one shared value
+# instead of each hard-coding its own `k=3` (docs/RAG.md, Phase 4 Step 10).
+DEFAULT_TOP_K = 3
 
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does",
@@ -75,6 +85,7 @@ SYNONYMS = {
 @dataclass
 class EvidenceChunk:
     text: str
+    document_id: str
     section: str
     title: str
     publisher: str
@@ -87,6 +98,7 @@ class EvidenceChunk:
     def to_dict(self) -> dict[str, Any]:
         return {
             "text": self.text,
+            "document_id": self.document_id,
             "section": self.section,
             "title": self.title,
             "publisher": self.publisher,
@@ -100,6 +112,22 @@ class EvidenceChunk:
     @property
     def citation(self) -> str:
         return f"{self.publisher}, \"{self.title}\" — {self.section} ({self.source_url})"
+
+    @property
+    def citation_block(self) -> str:
+        """The Phase 4 Step 19 citation representation — verbose and
+        structured, for a future Clinical Agent to attach to a specific
+        claim (Claim -> Evidence ID -> Source). The short `citation`
+        property above remains what chat/care-plan narratives use inline;
+        this is additive, not a replacement."""
+        return (
+            f"Title: {self.title}\n"
+            f"Source: {self.publisher}\n"
+            f"Document: {self.document_id}\n"
+            f"Section: {self.section}\n"
+            f"URL: {self.source_url or '(none)'}\n"
+            f"Retrieval score: {round(self.score, 4)}"
+        )
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
@@ -121,22 +149,35 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
     return meta, body
 
 
+def _slugify(heading: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+    return slug or "section"
+
+
 def load_chunks() -> list[EvidenceChunk]:
     """One chunk per markdown section — sections in these documents are short
     and topically coherent, so they make better citation units than a fixed
-    character window that would split mid-argument."""
+    character window that would split mid-argument.
+
+    Malformed input degrades gracefully rather than crashing ingestion: a
+    section with no body text is skipped (nothing to cite), and any
+    frontmatter field this function doesn't find is left as an empty
+    string/"unknown" rather than fabricated (Phase 4 Step 6 — never invent
+    a publisher, URL, or license that isn't actually in the source file)."""
     chunks: list[EvidenceChunk] = []
     for path in sorted(KB_DIR.glob("*.md")):
         meta, body = _parse_frontmatter(path.read_text())
         for block in re.split(r"^##\s+", body, flags=re.MULTILINE)[1:]:
             heading, _, text = block.partition("\n")
+            heading = heading.strip()
             text = " ".join(text.split())
             if not text:
                 continue
             chunks.append(
                 EvidenceChunk(
                     text=text,
-                    section=heading.strip(),
+                    document_id=f"{path.stem}#{_slugify(heading)}",
+                    section=heading,
                     title=meta.get("title", path.stem),
                     publisher=meta.get("publisher", "unknown"),
                     source_url=meta.get("source_url", ""),
@@ -154,6 +195,16 @@ class KeywordStore:
     tests."""
 
     backend_name = "keyword-fallback"
+
+    # A relevance floor beyond the built-in "zero token overlap -> excluded"
+    # rule below (docs/RAG.md "Relevance threshold" — calibrated
+    # empirically, not a medically meaningful number). On the actual
+    # knowledge base, genuine on-topic queries score >= 1.4; a probe set of
+    # off-topic queries occasionally scores a low nonzero value from an
+    # incidental partial-word stem match (e.g. "development" partially
+    # matching "develops") — 0.5 sits well above that noise floor and well
+    # below every genuine on-topic score observed.
+    MIN_RELEVANCE_SCORE = 0.5
 
     def __init__(self, chunks: list[EvidenceChunk]):
         self.chunks = chunks
@@ -173,7 +224,7 @@ class KeywordStore:
         raw = [t for t in re.findall(r"[a-z]+", text.lower()) if t not in STOPWORDS and len(t) > 2]
         return {cls._stem(t) for t in raw} | set(raw)
 
-    def query(self, text: str, k: int = 3) -> list[EvidenceChunk]:
+    def query(self, text: str, k: int = DEFAULT_TOP_K) -> list[EvidenceChunk]:
         q = self._tokens(text)
         if not q:
             return []
@@ -194,6 +245,8 @@ class KeywordStore:
             synonym_only = len((expanded - q) & all_tokens) * 0.4
             title_bonus = len(expanded & section_tokens) * 1.5
             score = (direct + synonym_only + title_bonus) / len(q)
+            if score < self.MIN_RELEVANCE_SCORE:
+                continue
             scored.append(EvidenceChunk(**{**chunk.__dict__, "score": score}))
         scored.sort(key=lambda c: c.score, reverse=True)
         return scored[:k]
@@ -201,6 +254,20 @@ class KeywordStore:
 
 class ChromaStore:
     backend_name = "chromadb+sentence-transformers"
+
+    # Calibrated empirically (docs/RAG.md "Relevance threshold") against 16
+    # on-topic queries — including deliberately hard, near-zero-literal-
+    # overlap paraphrases such as "what are the warning signs I should
+    # watch for" (the existing regression test for exactly this class of
+    # query) — and 8 clearly off-topic queries, all scored against this
+    # exact knowledge base and embedding model. The hard paraphrases score
+    # much lower than an easy direct question (0.197 vs. 0.68+), which is
+    # why this threshold sits far lower than a first pass using only easy
+    # probe queries suggested: off-topic noise topped out at 0.103, the
+    # hardest genuine on-topic paraphrase scored 0.197. 0.15 sits roughly
+    # in the middle of that (narrow, but real) gap. This is a
+    # retrieval-quality cutoff only, not a claim about medical relevance.
+    MIN_RELEVANCE_SCORE = 0.15
 
     def __init__(self, chunks: list[EvidenceChunk]):
         import chromadb
@@ -218,12 +285,18 @@ class ChromaStore:
         # the closest neighbor and not much else. Setting the space
         # explicitly at creation time is required; it cannot be changed on
         # an existing collection.
-        collection_meta = {"hnsw:space": "cosine"}
+        collection_meta = {"hnsw:space": "cosine", "schema_version": SCHEMA_VERSION}
         self.collection = client.get_or_create_collection(COLLECTION, metadata=collection_meta)
-        if self.collection.count() != len(chunks) or self.collection.metadata.get("hnsw:space") != "cosine":
-            # Rebuild from scratch when the KB changed, or when an older
-            # collection was created before cosine space was set explicitly
-            # — small corpus, so a full re-embed is cheaper than migrating.
+        if (
+            self.collection.count() != len(chunks)
+            or self.collection.metadata.get("hnsw:space") != "cosine"
+            or self.collection.metadata.get("schema_version") != SCHEMA_VERSION
+        ):
+            # Rebuild from scratch when the KB changed, when an older
+            # collection was created before cosine space was set explicitly,
+            # or when the metadata schema itself changed (e.g. Phase 4 added
+            # document_id) — small corpus, so a full re-embed is cheaper
+            # than migrating.
             client.delete_collection(COLLECTION)
             self.collection = client.get_or_create_collection(COLLECTION, metadata=collection_meta)
             embeddings = self.model.encode([c.text for c in chunks]).tolist()
@@ -233,6 +306,7 @@ class ChromaStore:
                 embeddings=embeddings,
                 metadatas=[
                     {
+                        "document_id": c.document_id,
                         "section": c.section,
                         "title": c.title,
                         "publisher": c.publisher,
@@ -245,16 +319,20 @@ class ChromaStore:
                 ],
             )
 
-    def query(self, text: str, k: int = 3) -> list[EvidenceChunk]:
+    def query(self, text: str, k: int = DEFAULT_TOP_K) -> list[EvidenceChunk]:
         embedding = self.model.encode([text]).tolist()
         res = self.collection.query(query_embeddings=embedding, n_results=k)
         out: list[EvidenceChunk] = []
         for doc, meta, dist in zip(
             res["documents"][0], res["metadatas"][0], res["distances"][0]
         ):
+            score = 1.0 - float(dist)
+            if score < self.MIN_RELEVANCE_SCORE:
+                continue
             out.append(
                 EvidenceChunk(
                     text=doc,
+                    document_id=meta.get("document_id", ""),
                     section=meta.get("section", ""),
                     title=meta.get("title", ""),
                     publisher=meta.get("publisher", ""),
@@ -262,7 +340,7 @@ class ChromaStore:
                     accessed=meta.get("accessed", ""),
                     license=meta.get("license", ""),
                     attribution=meta.get("attribution", ""),
-                    score=1.0 - float(dist),
+                    score=score,
                 )
             )
         return out
