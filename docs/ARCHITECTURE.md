@@ -1035,6 +1035,33 @@ any earlier phase. Two things were actually done, not conflated:
    asked for and that would need its own design, not a rushed addition
    here.
 
+## 13.15 Phase 8: validation, and the current-state architecture
+
+Phase 8 audited this entire document against the actual current code
+(agents, routers, services, tests) rather than assuming the sections above
+— many written incrementally across §13.8-§13.14 — were still fully
+in sync with each other. Finding: they were. No architectural drift was
+found; no component described above has been removed, replaced, or
+silently changed since the phase that introduced it.
+
+One genuine gap was closed: §3's original architecture diagram (and the
+top-level README's, which pointed back to it) predates the Clinical
+Analysis Agent, XGBoost, and PubMed, and shows a single linear pipeline
+rather than the LangGraph's actual four separate routes
+(`intake`/`simulation`/`chat`/`clinical`). Rather than editing §3 in place
+(preserving it as an accurate record of the *original* design this project
+extended), the current, code-derived diagram, component responsibility
+table, and technology-choice rationale now live in
+**[FINAL_REPORT.md §6 and §15](FINAL_REPORT.md)** — generated directly from
+`app/agents/orchestrator.py`'s actual graph-building calls during Phase 8,
+not copied forward from an earlier diagram. That is the diagram to trust
+for "what does this system actually do right now."
+
+Full Phase 8 validation methodology and findings, subsystem by subsystem:
+[ML_VALIDATION.md](ML_VALIDATION.md), [SAFETY.md](SAFETY.md),
+[PRIVACY.md](PRIVACY.md), [TESTING.md](TESTING.md),
+[EVALUATION.md](EVALUATION.md), [LIMITATIONS.md](LIMITATIONS.md).
+
 ## 14. References
 
 - CDC BRFSS 2015 Diabetes Health Indicators — UCI Machine Learning Repository #891 / Centers for Disease Control and Prevention Behavioral Risk Factor Surveillance System (U.S. government work, public domain). The project's active training source — see §13.7.

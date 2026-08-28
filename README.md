@@ -9,6 +9,34 @@ rather than a single-shot prediction. An orchestrator routes work across
 specialist agents, and a Safety/Clinician-Review Agent reviews every
 clinically-sensitive output before it is shown.
 
+**Main capabilities:** a Digital Twin that never overwrites patient
+history; a screening-risk RandomForest (production) with an XGBoost
+candidate for comparison, including real per-patient SHAP explanations;
+evidence retrieval that cites its sources, from a local curated corpus and
+optionally live PubMed; a Clinical Analysis Agent that composes all of the
+above into one structured, cited, grounded response with tested
+hallucination defenses; a what-if simulator; and a deterministic safety
+gate that reviews every sensitive output before it's returned.
+
+## Documentation
+
+This README covers setup and a project overview. For depth:
+
+| Document | Covers |
+|---|---|
+| [docs/FINAL_REPORT.md](docs/FINAL_REPORT.md) | **Start here** — the complete, consolidated project story: motivation, architecture, every subsystem, evaluation, limitations, future work |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full design + phase-by-phase build history |
+| [docs/DIGITAL_TWIN.md](docs/DIGITAL_TWIN.md) | Event-sourced patient state model |
+| [docs/ML.md](docs/ML.md) / [docs/ML_BASELINE.md](docs/ML_BASELINE.md) / [docs/ML_VALIDATION.md](docs/ML_VALIDATION.md) | Model training, baseline methodology, and Phase 8's independent re-verification of every reported metric |
+| [docs/RAG.md](docs/RAG.md) | Local + PubMed evidence retrieval |
+| [docs/CLINICAL_ANALYSIS.md](docs/CLINICAL_ANALYSIS.md) | The Clinical Analysis Agent and its frontend |
+| [docs/SAFETY.md](docs/SAFETY.md) | The safety policy gate, including the historical metformin false-positive bug and its fix |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | What's protected, and the real gap (no auth layer) stated plainly |
+| [docs/TESTING.md](docs/TESTING.md) | Exact test counts and coverage, per file |
+| [docs/EVALUATION.md](docs/EVALUATION.md) | Formal evaluation — every figure labeled measured/observed/not measured |
+| [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | The complete, consolidated limitations list |
+| [docs/LEAKAGE.md](docs/LEAKAGE.md) | A worked target-leakage example from the project's original (since-replaced) dataset |
+
 ---
 
 ## Quick start
@@ -61,37 +89,37 @@ curl -X POST localhost:8000/api/patients/demo \
 ```
                     React + Vite frontend (8 pages)
                                 │  REST/JSON
-                    FastAPI  ───┴────────────────────┐
-                                │                     │
-                    Orchestrator Agent (LangGraph StateGraph)
-                    deterministic routing, shared state + trace
+                            FastAPI (6 routers)
                                 │
-   ┌──────────┬─────────────────┼──────────────┬──────────────┐
-   │          │                 │              │              │
-Screening  Evidence         What-if        Care-Plan     Conversational
- Baseline    (RAG)         Simulation        Rules        (LLM/rules)
-(sklearn)  (Chroma)      (delta model)
-   │          │                 │              │              │
-   └──────────┴────────┬────────┴──────────────┴──────────────┘
-                       │
+                    Orchestrator Agent (LangGraph StateGraph)
+             deterministic routing by mode, shared state + trace
+                                │
+   ┌───────────┬────────────────┼─────────────────┐
+   │           │                │                 │
+ intake    simulation         chat            clinical
+   │           │                │                 │
+Screening   What-if      Conversational    Clinical Analysis Agent
++ Evidence  Simulation    (LLM/rules)     (composes: Screening RF +
++ Care Plan (delta model) + Evidence tool   XGBoost candidate + Evidence
+                                            (local + PubMed) + Simulation)
+   │           │                │                 │
+   └───────────┴────────┬───────┴─────────────────┘
+                        │
         Safety / Clinician-Review Agent  ← YAML policy, not an LLM judge
         APPROVED / FLAGGED / BLOCKED → append-only safety_audit_log
-                       │
+                        │
               Patient Digital Twin (event-sourced timeline, SQLite)
 ```
 
-Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-Project report (results, findings, limitations): [docs/REPORT.md](docs/REPORT.md).
+Every route above passes through the Safety Agent before returning — this
+is a structural property of the LangGraph edges, not a convention (see
+[docs/SAFETY.md](docs/SAFETY.md)).
 
-> **Note on this diagram and report:** both predate later additions —
-> an XGBoost candidate model, PubMed evidence, and a Clinical Analysis
-> Agent that composes the Digital Twin, both models, and evidence into one
-> structured, cited, Safety-gated analysis (`/clinical-analysis` in the
-> frontend, `POST /api/clinical/analyze`). See
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §13.8-§13.14 and
-> [docs/CLINICAL_ANALYSIS.md](docs/CLINICAL_ANALYSIS.md) for what's
-> actually current — updating this top-level diagram/report to match is
-> known, tracked documentation debt, not an oversight.
+Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Consolidated,
+current-state final report: **[docs/FINAL_REPORT.md](docs/FINAL_REPORT.md)**
+— the right starting point if you're reading this project for the first
+time. Original pre-extension project report:
+[docs/REPORT.md](docs/REPORT.md).
 
 ### Agents
 
@@ -235,18 +263,21 @@ evidence retrieval, care-plan rules and the safety gate need no LLM at all.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/patients` · `/demo` · `GET /api/patients` | Create / list patients |
-| `POST /api/twin/{id}/events` | Append a timeline event |
+| `POST /api/patients` · `GET /api/patients` · `GET /api/patients/{id}` | Create / list / fetch patients |
+| `GET /api/patients/demo-profiles` · `POST /api/patients/demo` | List / create the 3 seeded demo profiles |
+| `POST /api/twin/{id}/events` | Append a timeline event (measurement, lifestyle_log, lab_result, medication_change) |
 | `GET /api/twin/{id}/timeline` | Full history + materialized current state |
-| `POST /api/screening/run` | Screening baseline, safety-gated |
+| `GET /api/twin/{id}/digital-twin` | Richer nested view: clinical/lifestyle fields, lab history, medication history |
+| `GET /api/twin/{id}/labs/{test_name}` | Latest value, full history, and a trend label for one test (e.g. `HbA1c`) |
+| `POST /api/screening/run` | Screening baseline (RandomForest, production), safety-gated |
 | `POST /api/simulate` | What-if risk trajectory, safety-gated |
 | `POST /api/careplan/generate` | Care plan with citations |
 | `POST /api/chat` | Conversational agent, safety-gated |
 | `POST /api/clinical/analyze` | Clinical Analysis Agent — Digital Twin + models + evidence + simulation, safety-gated |
-| `POST /api/ml/xgboost/predict` · `GET /api/ml/comparison` | XGBoost candidate score; RF-vs-XGBoost comparison |
-| `POST /api/evidence/search` | Direct query into the Evidence Agent (local and/or PubMed) |
+| `POST /api/ml/xgboost/predict` · `GET /api/ml/comparison` | XGBoost candidate score; RF-vs-XGBoost comparison (reads persisted artifacts, never retrains) |
+| `POST /api/evidence/search` | Direct query into the Evidence Agent (`source`: local / pubmed / all) |
 | `POST /api/agents/run` | Full pipeline + trace (demo/grading) |
-| `GET /api/safety/audit-log` · `/policy` | Audit trail and active policy |
+| `GET /api/safety/audit-log` · `/api/safety/policy` | Audit trail and active policy |
 | `GET /api/health` | Liveness + which backends are active |
 
 Interactive docs at `/docs`.
@@ -257,16 +288,21 @@ Interactive docs at `/docs`.
 
 ```bash
 cd backend && source venv/bin/activate && python -m pytest tests/ -q   # 391 tests (1 skipped: opt-in live PubMed test)
-cd frontend && npm test                                                # 18 tests
+cd frontend && npm test                                                # 26 tests
 ```
 
 Backend coverage includes the safety policy (block/flag/approve, determinism,
-word-boundary false positives), eligibility gating, twin append-only
-semantics, simulation isolation from the real timeline, the free-text
-hypothesis parser, both RAG backends (including a regression guard on the
-Chroma cosine-similarity fix), and an end-to-end smoke test over the API
-covering **both a screening-eligible patient and one with an incomplete
-recorded history**.
+word-boundary false positives, the historical metformin false-positive
+regression), eligibility gating, twin append-only semantics, lab trend
+labeling (0/1/2/3+ points), simulation isolation from the real timeline,
+the free-text hypothesis parser, both RAG backends (including a regression
+guard on the Chroma cosine-similarity fix), multi-source evidence fusion
+(local + PubMed), hallucination defense (fabricated citations, model-name
+and numeric-score mismatches), privacy boundaries (no patient identifiers
+in PubMed/LLM calls or logs), error resilience under component failure,
+and end-to-end smoke tests over the API covering **both a
+screening-eligible patient and one with an incomplete recorded history**.
+Exact per-file counts and methodology: [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
@@ -285,6 +321,11 @@ and displayed with every WHO-derived excerpt in the UI.
 ---
 
 ## Limitations
+
+Full, consolidated list (including ones not repeated here — no auth layer,
+no clinical validation, no expert-labelled PubMed evaluation, XGBoost
+candidate-model status): **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)**.
+The ones most relevant to the ML baseline specifically:
 
 - **BRFSS is self-reported survey data, not lab measurements.** Every field
   is a telephone-survey answer, subject to recall accuracy, non-response, and
@@ -328,3 +369,27 @@ and displayed with every WHO-derived excerpt in the UI.
   schema is plain SQLAlchemy, so migrating to Postgres later would mean
   changing a connection string and the JSON column type, not the model layer.
 - **Not a clinical tool.** Coursework and demonstration only.
+
+---
+
+## Future work
+
+Prioritized roadmap — full detail in
+[docs/FINAL_REPORT.md §20](docs/FINAL_REPORT.md#20-future-work):
+
+1. **Security foundation** — authentication, authorization, patient-scoped
+   access, requester-identity audit logging. The most consequential gap in
+   the current system.
+2. **Evidence evaluation** — expert-labelled PubMed relevance judgments, a
+   larger local corpus, evidence-quality grading.
+3. **Stronger ML validation** — an external validation dataset,
+   leakage/duplicate-aware split comparison, calibration checking,
+   subgroup evaluation.
+4. **Clinical validation** — review by qualified clinical experts.
+5. **Efficiency/observability** — cache the RF-vs-XGBoost comparison's
+   test-set re-evaluation and SHAP explainer construction (currently
+   ~0.55–0.68s per request, measured); explicit PubMed availability
+   status in API responses.
+6. **MCP** — deliberately deferred until Priority 1 exists; exposing this
+   system's tools before there is any access control would widen the
+   current gap, not narrow it.

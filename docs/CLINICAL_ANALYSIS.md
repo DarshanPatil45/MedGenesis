@@ -732,3 +732,40 @@ Explicitly NOT implemented: MCP (deferred, reasons above), clinical-analysis
 persistence (deferred, reasons above), any form of clinical validation,
 diagnosis, or treatment capability — this remains a research/decision-support
 prototype throughout.
+
+# Phase 8 update: frontend polish (commit `222ac6a`)
+
+A later, frontend-only phase (no backend change) revised the Clinical
+Analysis page described above. This section corrects the details that
+changed; everything else on this page (backend behavior, LangGraph flow,
+hallucination defense, safety ordering) is unchanged and still accurate.
+
+- The Analyze button's accessible name is **"Analyze Patient"**, not
+  "Analyze" — the frontend test suite asserts on this exact string.
+- Evidence findings are now displayed in two grouped sections, **"Local
+  evidence"** and **"PubMed evidence"**, rather than one flat list — while
+  preserving the backend's original `[E#]` numbering (a source's citation
+  number reflects its position in the original combined retrieval order,
+  not its position within its display group).
+- `claim_type` is rendered as a small badge and `evidence_ids` as
+  clickable chips linking to the matching citation card, rather than plain
+  parenthetical/bracket text.
+- A **"Model evaluation metrics"** table (Accuracy/Precision/Recall/F1/
+  ROC-AUC, RandomForest vs. XGBoost) now renders under Model analysis when
+  "Compare models" is checked, reading `GET /api/ml/comparison` directly
+  (an existing, previously-unconsumed endpoint) rather than only the prose
+  sentence in `model_analysis`.
+- The agent trace is a collapsed-by-default `<details>` element
+  ("Analysis details (trace)"), not an always-open card.
+- The question textarea has a 2000-character limit with a live counter,
+  and Ctrl/Cmd+Enter submits.
+- The page and the rest of the app gained a mobile navigation toggle and
+  responsive breakpoints at ~860px/480px; verified with no horizontal
+  scroll at 1440/1024/768/390px.
+- Frontend test count for this page's suite grew from 6 to 15 (repo-wide
+  frontend: 18 → 26); see [TESTING.md](TESTING.md) for exact current
+  counts. No backend test changed.
+
+Nothing above changes what data the backend computes or returns — see
+[LIMITATIONS.md](LIMITATIONS.md) and [FINAL_REPORT.md](FINAL_REPORT.md)
+for the current, consolidated project state.
