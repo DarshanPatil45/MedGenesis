@@ -23,6 +23,8 @@ from app.schemas import (
     CarePlanRequest,
     ChatOut,
     ChatRequest,
+    ClinicalAnalysisOut,
+    ClinicalAnalysisRequest,
     SafetyOut,
     ScreeningOut,
     ScreeningRequest,
@@ -236,6 +238,39 @@ def chat(body: ChatRequest, db: Session = Depends(get_db)):
         sources=chat_result["sources"],
         generated_by=chat_result["generated_by"],
         tools_used=chat_result["tools_used"],
+        safety=_safety_out(result),
+        trace=result["trace"],
+    )
+
+
+@router.post("/clinical/analyze", response_model=ClinicalAnalysisOut)
+def analyze_clinical(body: ClinicalAnalysisRequest, db: Session = Depends(get_db)):
+    """Runs through the Orchestrator (mode="clinical") exactly like every
+    other clinically-sensitive endpoint on this router — the Clinical
+    Analysis Agent composes the analysis, then the Safety Agent
+    independently gates it (docs/CLINICAL_ANALYSIS.md). Not persisted:
+    unlike screening/care-plan, nothing downstream references a stored
+    clinical-analysis row yet, so there is no ScreeningAssessment-style
+    table for this endpoint this phase."""
+    _require_patient(db, body.patient_id)
+    result = Orchestrator(db).run(
+        mode="clinical",
+        patient_id=body.patient_id,
+        question=body.question,
+        include_model_comparison=body.include_model_comparison,
+        include_evidence=body.include_evidence,
+        include_pubmed=body.include_pubmed,
+        include_simulation=body.include_simulation,
+        use_llm=body.use_llm,
+    )
+    ca = result["clinical_analysis"]
+    return ClinicalAnalysisOut(
+        patient_id=body.patient_id,
+        **{k: ca[k] for k in (
+            "question", "status", "scope", "patient_summary", "model_analysis", "evidence_findings",
+            "simulation", "integrated_analysis", "uncertainties", "citations", "safety_flags",
+            "unavailable_reason", "generated_by", "production_risk_tier",
+        )},
         safety=_safety_out(result),
         trace=result["trace"],
     )

@@ -295,3 +295,43 @@ class EvidenceSearchOut(BaseModel):
     source: str
     backend: str
     results: list[EvidenceSearchResultOut]
+
+
+# --- Phase 6: Clinical Analysis Agent (docs/CLINICAL_ANALYSIS.md) ---
+# Composition layer over existing agents/services — see app/agents/clinical_agent.py.
+
+
+class ClinicalAnalysisRequest(BaseModel):
+    patient_id: int
+    question: str = Field(..., min_length=1, max_length=2000)
+    include_model_comparison: bool = False
+    include_evidence: bool = True
+    include_pubmed: bool = False
+    include_simulation: bool = False
+    use_llm: bool = True
+
+
+class ClinicalClaimOut(BaseModel):
+    claim: str
+    claim_type: str
+    evidence_ids: list[str]
+
+
+class ClinicalAnalysisOut(BaseModel):
+    patient_id: int
+    question: str
+    status: str
+    scope: str
+    patient_summary: list[ClinicalClaimOut]
+    model_analysis: list[ClinicalClaimOut]
+    evidence_findings: list[dict[str, Any]]
+    simulation: dict[str, Any] | None
+    integrated_analysis: list[ClinicalClaimOut]
+    uncertainties: list[str]
+    citations: list[str]
+    safety_flags: list[str]
+    unavailable_reason: str | None
+    generated_by: str
+    production_risk_tier: str | None
+    safety: SafetyOut
+    trace: list[str]

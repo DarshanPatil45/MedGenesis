@@ -67,26 +67,29 @@ class TestRandomForestUntouched:
         assert 0.0 <= result.risk_probability <= 1.0
 
 
-class TestClinicalAgentScaffolding:
+class TestClinicalAgentNowImplemented:
+    """Phase 1 introduced ClinicalAnalysisAgent as scaffolding — `.run()`
+    raised NotImplementedError and ClinicalAnalysisResult defaulted to
+    status="not_implemented", both verified directly by the assertions
+    this class used to make. Phase 6 (docs/CLINICAL_ANALYSIS.md) replaced
+    that stub with a real composition-layer implementation — the whole
+    point of that phase was to make `.run()` stop raising and to give
+    ClinicalAnalysisResult a real, populated shape (also changing its
+    signature: `.run()` now takes (twin_state, question, **flags) instead
+    of the Phase 1 guess of (twin_state, risk_output), since the actual
+    Phase 6 spec required a `question` field the skeleton predates).
+    Comprehensive behavioral tests for the real implementation live in
+    tests/test_clinical_agent.py and tests/test_clinical_analysis_api.py.
+    What's still checked here is what's still true: the agent imports
+    cleanly and follows the same singleton convention as every other
+    agent."""
+
     def test_imports_and_instantiates(self):
         from app.agents.clinical_agent import ClinicalAnalysisAgent, get_clinical_agent
 
         agent = ClinicalAnalysisAgent()
         assert agent.name == "ClinicalAnalysisAgent"
         assert get_clinical_agent() is get_clinical_agent()  # singleton, matches other agents
-
-    def test_run_is_an_honest_stub(self):
-        from app.agents.clinical_agent import get_clinical_agent
-
-        with pytest.raises(NotImplementedError):
-            get_clinical_agent().run({}, {})
-
-    def test_result_default_status_is_not_implemented(self):
-        from app.agents.clinical_agent import ClinicalAnalysisResult
-
-        result = ClinicalAnalysisResult()
-        assert result.status == "not_implemented"
-        assert result.to_dict()["status"] == "not_implemented"
 
 
 class TestPubMedScaffolding:

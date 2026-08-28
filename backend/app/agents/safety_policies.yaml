@@ -6,7 +6,7 @@
 # grading. Bump policy_version whenever a rule changes — every audit row
 # records the version it was decided under.
 
-policy_version: "1.0.0"
+policy_version: "1.1.0"
 
 # --- BLOCK rules -----------------------------------------------------------
 # Matched case-insensitively against the output's user-visible text. A single
@@ -28,8 +28,16 @@ blocked_patterns:
 
   - id: medication_advice
     reason: "Medication or dosage guidance requires a licensed clinician."
+    # Phrase-level patterns only — a bare drug name ("metformin") used to be
+    # blocked here too, but the Clinical Analysis Agent (Phase 6) is
+    # explicitly required to be able to display a patient's own recorded
+    # medication HISTORY as neutral fact ("Current medication history
+    # includes: Metformin"), which is not advice and must not be blocked.
+    # Every pattern below is drug-name-agnostic and catches actual
+    # ADVICE phrasing regardless of which medication is named, so removing
+    # the bare name does not weaken detection of genuine advice — "start
+    # taking metformin" still matches "start taking" either way.
     patterns:
-      - "metformin"
       - "insulin injection"
       - "insulin dose"
       - "start taking"
@@ -90,6 +98,7 @@ disclaimer_required_for:
   - simulation
   - care_plan
   - chat
+  - clinical_analysis
 
 required_scope: "educational_screening_only"
 

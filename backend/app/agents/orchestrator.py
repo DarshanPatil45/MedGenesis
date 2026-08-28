@@ -21,6 +21,7 @@ from langgraph.graph import END, StateGraph
 from sqlalchemy.orm import Session
 
 from app.agents.careplan_agent import get_careplan_agent
+from app.agents.clinical_agent import get_clinical_agent
 from app.agents.conversational_agent import get_conversational_agent
 from app.agents.evidence_agent import get_evidence_agent
 from app.agents.safety_agent import (
@@ -34,7 +35,7 @@ from app.agents.screening_agent import get_screening_agent
 from app.agents.simulation_agent import get_simulation_agent
 from app.services import twin as twin_service
 
-Mode = Literal["intake", "simulation", "chat"]
+Mode = Literal["intake", "simulation", "chat", "clinical"]
 
 
 class MedGenesisState(TypedDict, total=False):
@@ -46,6 +47,11 @@ class MedGenesisState(TypedDict, total=False):
     message: str
     history: list[dict[str, str]]
     use_llm: bool
+    question: str
+    include_model_comparison: bool
+    include_evidence: bool
+    include_pubmed: bool
+    include_simulation: bool
     # working state
     twin_snapshot: dict[str, Any]
     base_timeline_event_id: int | None
@@ -54,6 +60,7 @@ class MedGenesisState(TypedDict, total=False):
     simulation: dict[str, Any]
     care_plan: dict[str, Any]
     chat: dict[str, Any]
+    clinical_analysis: dict[str, Any]
     # outputs
     safety: dict[str, Any]
     trace: list[str]
@@ -154,6 +161,34 @@ def build_graph(db: Session):
             "trace": _trace(state, f"WhatIfSimulationAgent: {note}."),
         }
 
+    def clinical_node(state: MedGenesisState) -> dict[str, Any]:
+        """Runs the Clinical Analysis Agent — a composition layer over the
+        screening/XGBoost/evidence/simulation agents, not a reimplementation
+        of any of them (docs/CLINICAL_ANALYSIS.md). Its own output is not
+        yet reviewed by Safety here; that happens uniformly in safety_node
+        below, same as every other route."""
+        result = get_clinical_agent().run(
+            state["twin_snapshot"],
+            state.get("question", ""),
+            db=db,
+            patient_id=state["patient_id"],
+            include_model_comparison=state.get("include_model_comparison", False),
+            include_evidence=state.get("include_evidence", True),
+            include_pubmed=state.get("include_pubmed", False),
+            include_simulation=state.get("include_simulation", False),
+            base_timeline_event_id=state.get("base_timeline_event_id"),
+            use_llm=state.get("use_llm", True),
+        )
+        return {
+            "clinical_analysis": result.to_dict(),
+            "trace": _trace(
+                state,
+                f"ClinicalAnalysisAgent: {result.status} ({result.generated_by}); "
+                f"{len(result.citations)} citation(s), {len(result.uncertainties)} uncertainty note(s), "
+                f"{len(result.safety_flags)} generation flag(s).",
+            ),
+        }
+
     def chat_node(state: MedGenesisState) -> dict[str, Any]:
         screening = state.get("screening") or {}
         result = get_conversational_agent().run(
@@ -189,6 +224,36 @@ def build_graph(db: Session):
                 scope=sim.get("scope"),
                 trajectory=sim.get("trajectory"),
             )
+        elif mode == "clinical":
+            ca = state.get("clinical_analysis") or {}
+            full_text = " ".join(
+                c.get("claim", "")
+                for section in (ca.get("patient_summary"), ca.get("model_analysis"), ca.get("integrated_analysis"))
+                for c in (section or [])
+            )
+            decision = agent.review_and_log(
+                db,
+                target_type="clinical_analysis",
+                target_id=state["patient_id"],
+                output_kind="clinical_analysis",
+                text=full_text,
+                scope=ca.get("scope"),
+                risk_tier=ca.get("production_risk_tier"),
+            )
+            if decision.is_blocked:
+                # The whole composed analysis is withheld together — a
+                # partially-blocked structured analysis (e.g. only the
+                # integrated_analysis replaced) could still leak the
+                # blocked content via patient_summary/model_analysis, so
+                # blocking clears every claim list rather than one field.
+                blocked = state.setdefault("clinical_analysis", {})
+                blocked["patient_summary"] = []
+                blocked["model_analysis"] = []
+                blocked["integrated_analysis"] = [
+                    {"claim": decision.text, "claim_type": "uncertainty", "evidence_ids": []}
+                ]
+                blocked["evidence_findings"] = []
+                blocked["citations"] = []
         elif mode == "chat":
             chat = state.get("chat") or {}
             decision = agent.review_and_log(
@@ -250,13 +315,14 @@ def build_graph(db: Session):
     graph.add_node("careplan", careplan_node)
     graph.add_node("simulation", simulation_node)
     graph.add_node("chat", chat_node)
+    graph.add_node("clinical", clinical_node)
     graph.add_node("safety", safety_node)
 
     graph.set_entry_point("load_twin")
     graph.add_conditional_edges(
         "load_twin",
         lambda s: s.get("mode", "intake"),
-        {"intake": "screening", "simulation": "simulation", "chat": "screening"},
+        {"intake": "screening", "simulation": "simulation", "chat": "screening", "clinical": "clinical"},
     )
     # In chat mode the screening result is context for the reply, not an
     # output of its own — it is not separately gated, the reply is.
@@ -269,6 +335,7 @@ def build_graph(db: Session):
     graph.add_edge("careplan", "safety")
     graph.add_edge("simulation", "safety")
     graph.add_edge("chat", "safety")
+    graph.add_edge("clinical", "safety")
     graph.add_edge("safety", END)
 
     return graph.compile()
@@ -291,6 +358,11 @@ class Orchestrator:
         message: str | None = None,
         history: list[dict[str, str]] | None = None,
         use_llm: bool = True,
+        question: str = "",
+        include_model_comparison: bool = False,
+        include_evidence: bool = True,
+        include_pubmed: bool = False,
+        include_simulation: bool = False,
     ) -> dict[str, Any]:
         initial: MedGenesisState = {
             "mode": mode,
@@ -300,6 +372,11 @@ class Orchestrator:
             "message": message or "",
             "history": history or [],
             "use_llm": use_llm,
+            "question": question,
+            "include_model_comparison": include_model_comparison,
+            "include_evidence": include_evidence,
+            "include_pubmed": include_pubmed,
+            "include_simulation": include_simulation,
             "trace": [f"OrchestratorAgent: routing mode='{mode}' for patient {patient_id}."],
         }
         return dict(self.graph.invoke(initial))

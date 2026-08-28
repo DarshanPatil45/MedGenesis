@@ -178,6 +178,7 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 - `GET /api/ml/comparison` *(Phase 3, §13.10)* — actual measured RandomForest-vs-XGBoost test metrics, computed live from both persisted artifacts
 - `POST /api/ml/xgboost/predict` *(Phase 3, §13.10)* — scores a patient's twin state with the XGBoost candidate model; comparison-only, not Safety-gated, not the production model
 - `POST /api/evidence/search` *(Phase 4/5, §13.11/§13.12)* — direct query into the Evidence Agent/RAG store; read-only, not Safety-gated (retrieves fixed, pre-vetted CDC/WHO content or live PubMed metadata, not generated text). `source` (`local`/`pubmed`/`all`, default `local`) added in Phase 5 — backwards compatible, existing `{"query": "..."}` requests unaffected
+- `POST /api/clinical/analyze` *(Phase 6, §13.13)* — the Clinical Analysis Agent, run through the Orchestrator (`mode="clinical"`) so it is Safety-gated like every other clinically-sensitive endpoint; composes Digital Twin + RandomForest + XGBoost (optional) + local/PubMed evidence (optional) + Simulation (optional) into a structured, cited analysis
 - `GET /api/health` — liveness check
 
 ## 9. Frontend Pages
@@ -830,6 +831,91 @@ the Phase 1-4 entries' format.
   XGBoost models or the Digital Twin — all explicitly out of scope this
   phase and confirmed untouched (no file under `app/ml/` or
   `app/services/twin.py` changed)
+
+### 13.13 MedGenesis extension: Phase 6 (Clinical Analysis Agent and grounded reasoning pipeline)
+
+Phase 6 turned the Phase 1 `ClinicalAnalysisAgent` scaffolding (§13.8) into
+a real composition layer over every agent/service built in Phases 1-5 — no
+subsystem was reimplemented; full detail and reasoning live in
+`docs/CLINICAL_ANALYSIS.md`. This is the first phase where the previously
+independent components (Digital Twin, RandomForest, XGBoost, local RAG,
+PubMed, Simulation, Safety) are combined into one output.
+
+**Implemented now:**
+
+- `app/agents/clinical_agent.py` — real implementation (`.run()` signature
+  changed from the Phase 1 guess `(twin_state, risk_output)` to
+  `(twin_state, question, **flags)`, since the actual spec required a
+  `question` field the skeleton predates). Produces a structured
+  `ClinicalAnalysisResult`: `patient_summary`/`model_analysis`/
+  `integrated_analysis` as lists of typed `ClinicalClaim`s
+  (`patient_observation`/`model_observation`/`evidence_supported`/
+  `inference`/`uncertainty`), plus `evidence_findings`, `citations`,
+  `uncertainties`, `safety_flags`.
+- Production (RandomForest, always run) and candidate (XGBoost, opt-in via
+  `include_model_comparison`) results are clearly and separately labelled
+  throughout; a tier disagreement between them produces an explicit
+  uncertainty claim rather than picking a winner. Real per-patient SHAP
+  contributions for XGBoost (via the existing `explain.py`, reusing
+  already-loaded artifacts) — not the aggregate training-time importances,
+  which would be a mismatch for a claim about one patient.
+- Evidence: reuses `EvidenceAgent.retrieve(query, source=...)` exactly —
+  `include_evidence` → `"local"`, `include_pubmed` → `"all"`. Query text
+  contains only human-readable clinical concepts, never patient
+  identifiers or raw twin values.
+- Hallucination defense: an LLM reply's `[E#]` citations are validated
+  against the evidence IDs actually supplied; an unknown ID is stripped
+  and flagged (`safety_flags`), never silently trusted. The deterministic
+  fallback path (no LLM) never paraphrases evidence text at all — only an
+  LLM is trusted to attempt that, matching the existing rules-decide/
+  LLM-only-rephrases pattern from `CarePlanAgent`/`ConversationalAgent`.
+- Orchestrator: new `"clinical"` mode (`Mode` Literal extended, not
+  replaced), a `clinical_node`, and a `safety_node` branch — the three
+  existing routes are byte-for-byte unchanged. `Orchestrator.run()` gained
+  five new optional kwargs (`question`, `include_model_comparison`,
+  `include_evidence`, `include_pubmed`, `include_simulation`), all
+  defaulted so no existing caller needed to change.
+- `POST /api/clinical/analyze` (`app/routers/agents.py`, not a new router
+  — co-located with the other Orchestrator/Safety-gated endpoints, unlike
+  Phase 3/4/5's deliberately non-gated `ml.py`/`evidence.py` utility
+  endpoints, since this one generates synthesized narrative text that
+  Safety exists to review).
+- **A real safety-policy bug found and fixed**: the existing
+  `medication_advice` blocked-pattern list blocked the bare word
+  "metformin" unconditionally — designed before anything needed to
+  *display* a medication name at all. Once the Clinical Agent correctly
+  started showing recorded medication history (Step 24's explicit
+  requirement), every analysis mentioning a patient's real Metformin
+  history was being blocked as if it were medication advice. Fixed by
+  removing the bare drug-name pattern (`safety_policies.yaml`, policy
+  version 1.0.0 → 1.1.0); every remaining pattern is drug-name-agnostic
+  and still catches genuine advice phrasing regardless of which drug is
+  named, confirmed by the existing parametrized advice-blocking test still
+  passing unchanged plus a new regression test locking in the fix.
+- 50 new tests across `tests/test_clinical_agent.py` (agent-level,
+  including hallucination defense, model-conflict handling, and privacy
+  boundary tests) and `tests/test_clinical_analysis_api.py` (API-level,
+  including a test that a Safety block clears every claim section, not
+  just the narrative).
+
+**Explicitly not implemented — planned for later phases:**
+
+- Validating that LLM-referenced patient values/model outputs exist in
+  the supplied data — only Evidence-ID validation was built (Step 34's
+  explicit "at minimum"); free-text numeric-value validation would need
+  disproportionate NLP work for this phase's scope
+- Persisting clinical analyses to a database table — no
+  `ScreeningAssessment`-style model was added, since nothing downstream
+  yet references a stored analysis; the endpoint is purely computational,
+  same precedent as `ml.py`/`evidence.py`'s read-only endpoints
+- Extending the generic `/api/agents/run` demo endpoint to cover
+  `mode="clinical"` — would require bolting `question`/`include_*` fields
+  onto a schema meant to stay a thin multi-mode DTO; the dedicated
+  `/api/clinical/analyze` endpoint already covers this need
+- MCP tool exposure — still deferred to Phase 13 of the original
+  MedGenesis phase list (§13.8)
+- Frontend integration — backend only this phase, per its own explicit
+  constraint
 
 ## 14. References
 
