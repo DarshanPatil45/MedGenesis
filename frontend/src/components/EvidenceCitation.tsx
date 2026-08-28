@@ -8,13 +8,19 @@ import type { EvidenceSource } from '../api/types'
  * numbered [E1]/[E2]... and referenced by ID elsewhere on the page, so
  * each one needs an anchor a reader can expand on demand. Reuses the same
  * `EvidenceSource` type — no second evidence shape.
+ *
+ * Takes `index` explicitly (1-based, matching the backend's own [E#]
+ * numbering — the order evidence was originally retrieved in, which is
+ * also what `evidence_ids`/`citations` elsewhere reference) rather than
+ * deriving it from array position, so a caller can group/filter the list
+ * for display (e.g. Local vs PubMed) without renumbering anything.
  */
-export function EvidenceCitations({ evidence }: { evidence: EvidenceSource[] }) {
-  if (!evidence?.length) return null
+export function EvidenceCitations({ items }: { items: { source: EvidenceSource; index: number }[] }) {
+  if (!items?.length) return null
   return (
     <div>
-      {evidence.map((source, i) => (
-        <EvidenceCitationCard key={source.document_id || i} index={i + 1} source={source} />
+      {items.map(({ source, index }) => (
+        <EvidenceCitationCard key={source.document_id || index} index={index} source={source} />
       ))}
     </div>
   )
@@ -27,7 +33,7 @@ function EvidenceCitationCard({ index, source }: { index: number; source: Eviden
   const pmid = source.source_type === 'pubmed' ? source.document_id.split('#')[1] : null
 
   return (
-    <div className="card" style={{ marginBottom: '0.6rem', padding: '0.7rem 0.9rem' }}>
+    <div id={`E${index}`} className="card" style={{ marginBottom: '0.6rem', padding: '0.7rem 0.9rem' }}>
       <button
         className="secondary"
         onClick={() => setOpen((v) => !v)}

@@ -332,3 +332,141 @@ code {
   border-radius: 4px;
   font-size: 0.85em;
 }
+
+/* Visible keyboard focus everywhere — buttons/links/inputs/selects all
+   rely on browser defaults today, which are inconsistent across
+   platforms. One explicit ring, applied only for keyboard focus (not
+   mouse clicks), matching :focus-visible support in every browser this
+   app targets. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* A wide table/chart never forces the page itself to scroll horizontally
+   — only its own container does. Used by the model-comparison table and
+   any other wide tabular content. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Small reference chip for an evidence ID cited inline next to a claim
+   (Clinical Analysis) — link-styled but reuses .badge sizing so it sits
+   comfortably in running text. */
+.evidence-chip {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #eef3f8;
+  color: var(--brand);
+  border: 1px solid #bcd3e6;
+  text-decoration: none;
+  margin-left: 0.15rem;
+}
+.evidence-chip:hover {
+  background: #dfeaf4;
+}
+
+/* Collapsible sections (e.g. the analysis trace) — styled to read as a
+   card-header-like control, consistent with .card's look, rather than the
+   browser's bare default <details>/<summary> triangle. */
+details.card {
+  padding: 0;
+}
+details.card > summary {
+  cursor: pointer;
+  padding: 1.1rem 1.25rem;
+  font-weight: 600;
+  list-style: none;
+}
+details.card > summary::-webkit-details-marker {
+  display: none;
+}
+details.card > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 1rem;
+  color: var(--muted);
+}
+details.card[open] > summary::before {
+  content: '▾';
+}
+details.card > summary:hover {
+  background: #fafbfd;
+}
+details.card > .details-body {
+  padding: 0 1.25rem 1.1rem;
+}
+
+/* Mobile navigation toggle — hidden on wider viewports, where the sidebar
+   is always visible as it already was. */
+.nav-toggle {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .app {
+    flex-direction: column;
+    min-height: auto;
+  }
+  .sidebar {
+    width: auto;
+    flex-shrink: 1;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 0.9rem;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .nav-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: #fff;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .nav {
+    display: none;
+    padding-top: 0.5rem;
+  }
+  .sidebar.nav-open .nav {
+    display: flex;
+  }
+  .sidebar .status-panel {
+    display: none;
+  }
+  .main {
+    max-width: 100%;
+    padding: 1.1rem 1rem 2.5rem;
+  }
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .card {
+    padding: 0.9rem 1rem;
+  }
+  th,
+  td {
+    padding: 0.4rem 0.45rem;
+  }
+}
+
+@media (max-width: 480px) {
+  h1 {
+    font-size: 1.25rem;
+  }
+  .msg {
+    max-width: 92%;
+  }
+}

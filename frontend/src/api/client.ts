@@ -8,6 +8,7 @@ import type {
   DigitalTwin,
   Health,
   LabTrend,
+  ModelComparison,
   Patient,
   Screening,
   Simulation,
@@ -114,4 +115,6 @@ export const api = {
 
   auditLog: () => request<AuditLogRow[]>('/api/safety/audit-log?limit=200'),
   safetyPolicy: () => request<Record<string, unknown>>('/api/safety/policy'),
+
+  mlComparison: () => request<ModelComparison>('/api/ml/comparison'),
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { api } from './api/client'
 import type { Health } from './api/types'
 import { PatientProvider, usePatients } from './PatientContext'
@@ -45,27 +45,44 @@ function PatientSwitcher() {
 
 function Shell() {
   const [health, setHealth] = useState<Health | null>(null)
+  const [navOpen, setNavOpen] = useState(false)
+  const location = useLocation()
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null))
   }, [])
 
+  // Close the mobile nav automatically after navigating — otherwise it
+  // stays open over the new page's content.
+  useEffect(() => {
+    setNavOpen(false)
+  }, [location.pathname])
+
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className={`sidebar${navOpen ? ' nav-open' : ''}`}>
         <div className="brand">
           MedGenesis
           <small>Agentic AI for Type 2 Diabetes education. Not a diagnostic device.</small>
         </div>
+        <button
+          type="button"
+          className="secondary nav-toggle"
+          aria-expanded={navOpen}
+          aria-controls="primary-nav"
+          onClick={() => setNavOpen((v) => !v)}
+        >
+          Menu {navOpen ? '▾' : '▸'}
+        </button>
         <PatientSwitcher />
-        <nav className="nav">
+        <nav className="nav" id="primary-nav">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end}>
               {item.label}
             </NavLink>
           ))}
         </nav>
-        <div className="muted" style={{ marginTop: 'auto', fontSize: '0.72rem' }}>
+        <div className="muted status-panel" style={{ marginTop: 'auto', fontSize: '0.72rem' }}>
           {health ? (
             <>
               <div>db: {health.database}</div>

@@ -226,3 +226,25 @@ export interface DigitalTwin {
   lifestyle: Record<string, unknown>
   timeline: Record<string, unknown>[]
 }
+
+// --- Phase 3 model-comparison endpoint (existed since Phase 3, first
+// consumed by the frontend in this polish pass — GET /api/ml/comparison) ---
+
+export interface ModelMetrics {
+  model_version: string
+  algorithm: string
+  test_metrics: Record<string, number>
+  confusion_matrix: Record<string, number>
+  training_time_seconds: number | null
+  inference_time_seconds_test_set: number
+  inference_time_seconds_per_1000_rows: number
+  model_size_bytes: number
+  feature_importances: Record<string, number>
+}
+
+export interface ModelComparison {
+  random_forest: ModelMetrics
+  xgboost: ModelMetrics
+  metrics_table: Record<string, Record<string, number>>
+  n_test: number
+}
