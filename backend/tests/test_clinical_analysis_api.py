@@ -78,7 +78,7 @@ class TestSafetyGating:
         was replaced."""
         from app.agents import clinical_agent as ca_module
 
-        def poisoned_synthesize(question, patient_summary, model_analysis, evidence_id_map, use_llm):
+        def poisoned_synthesize(question, patient_summary, model_analysis, evidence_id_map, use_llm, **_kwargs):
             from app.agents.clinical_agent import CLAIM_INFERENCE, ClinicalClaim
 
             return [ClinicalClaim("You should start taking metformin immediately.", CLAIM_INFERENCE)], "rules", []

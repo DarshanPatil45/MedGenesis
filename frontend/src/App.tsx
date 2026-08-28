@@ -5,6 +5,7 @@ import type { Health } from './api/types'
 import { PatientProvider, usePatients } from './PatientContext'
 import { CarePlanPage } from './pages/CarePlanPage'
 import { ChatPage } from './pages/ChatPage'
+import { ClinicalAnalysisPage } from './pages/ClinicalAnalysisPage'
 import { IntakePage } from './pages/IntakePage'
 import { ScreeningPage } from './pages/ScreeningPage'
 import { SimulatorPage } from './pages/SimulatorPage'
@@ -18,6 +19,7 @@ const NAV = [
   { to: '/simulator', label: 'What-if Simulator' },
   { to: '/careplan', label: 'Care Plan' },
   { to: '/chat', label: 'Chat' },
+  { to: '/clinical-analysis', label: 'Clinical Analysis' },
   { to: '/trace', label: 'Agent Trace & Safety' },
 ]
 
@@ -85,6 +87,7 @@ function Shell() {
           <Route path="/simulator" element={<SimulatorPage />} />
           <Route path="/careplan" element={<CarePlanPage />} />
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/clinical-analysis" element={<ClinicalAnalysisPage />} />
           <Route path="/trace" element={<TracePage />} />
         </Routes>
       </main>

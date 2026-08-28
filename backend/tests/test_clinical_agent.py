@@ -120,6 +120,7 @@ class TestConflictingModelOutputs:
                 [ClinicalClaim("The XGBoost candidate model (not the production model) assigned a score of 0.9 (High tier).", CLAIM_MODEL_OBSERVATION)],
                 "fake-version",
                 "High",
+                0.9,
             )
 
         monkeypatch.setattr(ca_module, "_xgboost_model_claims", fake_xgb_claims)

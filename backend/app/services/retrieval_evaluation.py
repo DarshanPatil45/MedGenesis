@@ -94,9 +94,87 @@ def run_evaluation(store: Any, k: int = 3, queries: list[dict[str, str]] | None 
     }
 
 
+@dataclass
+class ExpertLabelledQuery:
+    """A PubMed retrieval evaluation query as a domain expert would define
+    it (Phase 7 Step 24) — unlike EVALUATION_QUERIES above, a PubMed query
+    can legitimately have several relevant papers, not exactly one, so
+    `expected_documents` is a list and `expert_label`/`relevance` capture
+    a human reviewer's judgment explicitly, rather than assuming any
+    retrieved result is correct."""
+
+    query: str
+    expected_documents: list[str]  # PMIDs (or "pubmed#<pmid>" document_ids) an expert confirmed as relevant
+    expert_label: str  # e.g. "relevant" / "partially_relevant" / "not_relevant" — set by a human reviewer
+    relevance: float | None = None  # optional graded relevance score, expert-assigned, never inferred
+    notes: str = ""
+
+
+# Deliberately EMPTY (Phase 7 Step 24): "Do NOT fabricate PubMed ground
+# truth. Do not manufacture expected PMIDs." Populating this list requires
+# a domain expert reviewing real PubMed results for a real query and
+# recording which papers are actually relevant — work this phase has no
+# grounds to do on its own. This is infrastructure for that future
+# evaluation, not a placeholder for invented data. See
+# docs/RAG.md "Evaluation (PubMed / multi-source)" and
+# docs/CLINICAL_ANALYSIS.md for the same boundary stated in context.
+PUBMED_EXPERT_EVALUATION_SET: list[ExpertLabelledQuery] = []
+
+
+def run_pubmed_evaluation(store: Any, k: int = 3, queries: list[ExpertLabelledQuery] | None = None) -> dict:
+    """Same Hit Rate@k/MRR shape as run_evaluation() above, adapted for
+    multiple expected-relevant documents per query. Returns an explicit
+    "insufficient_data" status — never a fabricated metric — when no
+    expert-labelled queries are available, which is the case by default
+    since PUBMED_EXPERT_EVALUATION_SET ships empty."""
+    queries = queries if queries is not None else PUBMED_EXPERT_EVALUATION_SET
+    if not queries:
+        return {
+            "status": "insufficient_data",
+            "reason": (
+                "PubMed retrieval evaluation requires domain-expert relevance labels, which have "
+                "not been collected. No metric is reported rather than fabricated."
+            ),
+            "n_queries": 0,
+        }
+
+    per_query = []
+    hits = 0
+    reciprocal_ranks = []
+    for q in queries:
+        results = store.query(q.query, k=k)
+        retrieved_ids = [c.document_id for c in results]
+        expected_set = set(q.expected_documents)
+        rank = next((i + 1 for i, doc_id in enumerate(retrieved_ids) if doc_id in expected_set), None)
+        if rank is not None:
+            hits += 1
+            reciprocal_ranks.append(1.0 / rank)
+        per_query.append(
+            {
+                "query": q.query,
+                "expected_documents": q.expected_documents,
+                "expert_label": q.expert_label,
+                "retrieved_document_ids": retrieved_ids,
+                "rank_of_first_expected_match": rank,
+            }
+        )
+
+    n = len(queries)
+    return {
+        "status": "evaluated",
+        "backend": getattr(store, "backend_name", "unknown"),
+        "k": k,
+        "n_queries": n,
+        "hit_rate_at_k": hits / n,
+        "mrr": sum(reciprocal_ranks) / n if reciprocal_ranks else 0.0,
+        "per_query": per_query,
+    }
+
+
 if __name__ == "__main__":
     import json
 
     from app.services.rag import get_store
 
     print(json.dumps(run_evaluation(get_store()), indent=2))
+    print(json.dumps(run_pubmed_evaluation(get_store()), indent=2))

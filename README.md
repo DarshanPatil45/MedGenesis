@@ -59,7 +59,7 @@ curl -X POST localhost:8000/api/patients/demo \
 ## Architecture
 
 ```
-                    React + Vite frontend (7 pages)
+                    React + Vite frontend (8 pages)
                                 │  REST/JSON
                     FastAPI  ───┴────────────────────┐
                                 │                     │
@@ -82,6 +82,16 @@ Screening  Evidence         What-if        Care-Plan     Conversational
 
 Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Project report (results, findings, limitations): [docs/REPORT.md](docs/REPORT.md).
+
+> **Note on this diagram and report:** both predate later additions —
+> an XGBoost candidate model, PubMed evidence, and a Clinical Analysis
+> Agent that composes the Digital Twin, both models, and evidence into one
+> structured, cited, Safety-gated analysis (`/clinical-analysis` in the
+> frontend, `POST /api/clinical/analyze`). See
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §13.8-§13.14 and
+> [docs/CLINICAL_ANALYSIS.md](docs/CLINICAL_ANALYSIS.md) for what's
+> actually current — updating this top-level diagram/report to match is
+> known, tracked documentation debt, not an oversight.
 
 ### Agents
 
@@ -232,6 +242,9 @@ evidence retrieval, care-plan rules and the safety gate need no LLM at all.
 | `POST /api/simulate` | What-if risk trajectory, safety-gated |
 | `POST /api/careplan/generate` | Care plan with citations |
 | `POST /api/chat` | Conversational agent, safety-gated |
+| `POST /api/clinical/analyze` | Clinical Analysis Agent — Digital Twin + models + evidence + simulation, safety-gated |
+| `POST /api/ml/xgboost/predict` · `GET /api/ml/comparison` | XGBoost candidate score; RF-vs-XGBoost comparison |
+| `POST /api/evidence/search` | Direct query into the Evidence Agent (local and/or PubMed) |
 | `POST /api/agents/run` | Full pipeline + trace (demo/grading) |
 | `GET /api/safety/audit-log` · `/policy` | Audit trail and active policy |
 | `GET /api/health` | Liveness + which backends are active |
@@ -243,8 +256,8 @@ Interactive docs at `/docs`.
 ## Tests
 
 ```bash
-cd backend && source venv/bin/activate && python -m pytest tests/ -q   # 107 tests
-cd frontend && npm test                                                # 5 tests
+cd backend && source venv/bin/activate && python -m pytest tests/ -q   # 391 tests (1 skipped: opt-in live PubMed test)
+cd frontend && npm test                                                # 18 tests
 ```
 
 Backend coverage includes the safety policy (block/flag/approve, determinism,

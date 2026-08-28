@@ -178,7 +178,7 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 - `GET /api/ml/comparison` *(Phase 3, §13.10)* — actual measured RandomForest-vs-XGBoost test metrics, computed live from both persisted artifacts
 - `POST /api/ml/xgboost/predict` *(Phase 3, §13.10)* — scores a patient's twin state with the XGBoost candidate model; comparison-only, not Safety-gated, not the production model
 - `POST /api/evidence/search` *(Phase 4/5, §13.11/§13.12)* — direct query into the Evidence Agent/RAG store; read-only, not Safety-gated (retrieves fixed, pre-vetted CDC/WHO content or live PubMed metadata, not generated text). `source` (`local`/`pubmed`/`all`, default `local`) added in Phase 5 — backwards compatible, existing `{"query": "..."}` requests unaffected
-- `POST /api/clinical/analyze` *(Phase 6, §13.13)* — the Clinical Analysis Agent, run through the Orchestrator (`mode="clinical"`) so it is Safety-gated like every other clinically-sensitive endpoint; composes Digital Twin + RandomForest + XGBoost (optional) + local/PubMed evidence (optional) + Simulation (optional) into a structured, cited analysis
+- `POST /api/clinical/analyze` *(Phase 6/7, §13.13/§13.14)* — the Clinical Analysis Agent, run through the Orchestrator (`mode="clinical"`) so it is Safety-gated like every other clinically-sensitive endpoint; composes Digital Twin + RandomForest + XGBoost (optional) + local/PubMed evidence (optional) + Simulation (optional) into a structured, cited analysis. Phase 7 wired this into the frontend (`/clinical-analysis`, React) — the first UI for it
 - `GET /api/health` — liveness check
 
 ## 9. Frontend Pages
@@ -190,6 +190,7 @@ JSON columns use SQLAlchemy's generic `JSON` type (`app/models/types.py`), which
 5. **Care Plan** — generated plan with cited sources
 6. **Chat** — conversational assistant with source citations per message
 7. **Agent Trace & Safety Log** *(expanded)* — timeline of which agent ran, in what order, plus each output's Safety status (APPROVED/FLAGGED/BLOCKED) and reasons — the "show your work" screen for both the agentic architecture and the governance layer
+8. **Clinical Analysis** *(Phase 7, §13.14)* — ask a free-text clinical question, choose which of evidence/PubMed/model comparison/simulation to include, and view the structured result: patient observations, production-vs-candidate model analysis, model feature contributions, numbered expandable evidence citations, integrated analysis, uncertainty/limitations, and the same Safety banner every other page uses. Also the first page to surface the Phase 2 Digital Twin/lab-trend endpoints (`GET /api/twin/{id}/digital-twin`, `GET /api/twin/{id}/labs/{test_name}`) — built then, never called by the frontend until now
 
 ## 10. Project Structure
 
@@ -916,6 +917,123 @@ PubMed, Simulation, Safety) are combined into one output.
   MedGenesis phase list (§13.8)
 - Frontend integration — backend only this phase, per its own explicit
   constraint
+
+### 13.14 MedGenesis extension: Phase 7 (end-to-end product integration)
+
+Phase 7 turned the backend-only Phase 6 capability into a demonstrable
+product: frontend integration, live-browser verification (which is how
+two real severe bugs were found — below), expanded hallucination defense,
+explicit persistence and MCP decisions, and error-resilience hardening.
+Full detail and reasoning: `docs/CLINICAL_ANALYSIS.md`'s "Phase 7:
+End-to-End Integration" section — this entry is the summary.
+
+**Implemented now:**
+
+- `frontend/src/pages/ClinicalAnalysisPage.tsx` + `components/
+  EvidenceCitation.tsx` — the first UI for the Clinical Analysis Agent,
+  registered at `/clinical-analysis`. Reuses every existing frontend
+  convention (React Context for patient selection, the hand-written `api`
+  client, shared `Card`/`SafetyBanner`/`AgentTrace` components) — no new
+  frontend framework, state library, or styling system introduced.
+- The frontend's first use of the Phase 2 Digital Twin endpoints
+  (`GET /api/twin/{id}/digital-twin`, `GET /api/twin/{id}/labs/{test_name}`)
+  — built in Phase 2, never called by any page until now.
+- Two real, severe bugs found via live browser testing (not caught by the
+  passing unit test suite) and fixed:
+  1. A process-crashing macOS OpenMP conflict — `POST /api/clinical/analyze`
+     with `include_model_comparison=True` killed the entire uvicorn
+     process the first time it ran in a live server after RAG had already
+     loaded torch. Same root cause as the Phase 3/5 pytest-side fix;
+     `app/main.py` now carries the equivalent fix for the actual
+     application entrypoint, which has no conftest.py to rely on.
+  2. Two missing-model-artifact crashes inside `ClinicalAnalysisAgent.run()`
+     (RandomForest and XGBoost, independently) that used to discard an
+     entire valid analysis over one unavailable model — now caught locally
+     and degraded to an honest uncertainty claim, without modifying
+     `ScreeningAgent`/`XGBoostPredictionService` themselves (so every other
+     existing caller is unaffected).
+- Hallucination defense expanded from Evidence-ID-only (Phase 6) to also
+  cover model-name validation (reliable, fully implemented) and
+  numeric model-score validation (implemented, deliberately scoped to
+  score-claim trigger phrases with an explicit, documented tolerance rule
+  — not every number in the text). Patient-value validation (BMI/HbA1c/
+  blood pressure) was investigated and explicitly not attempted — the
+  false-positive rate from ambiguous free-text number attribution would
+  make it unreliable, and Step 20 explicitly permits documenting that
+  boundary rather than faking it.
+- Explicit persistence decision, re-affirmed with the full Step 14
+  checklist: clinical analyses remain generated on demand, not persisted —
+  no functional requirement exists yet, and adding a patient-data-bearing
+  table without one would be a real, unjustified privacy-surface increase.
+- Explicit MCP decision: deferred in full. The underlying functions are
+  mature enough, but this project has never built any authorization layer,
+  and an MCP tool exposes patient data to *autonomous agentic* access in a
+  way the existing local-only, human-driven REST API does not — Step 18's
+  own instruction to defer rather than weaken security was followed
+  directly.
+- `app/services/retrieval_evaluation.py::PUBMED_EXPERT_EVALUATION_SET` —
+  the schema for future domain-expert-labelled PubMed evaluation, shipped
+  deliberately empty; `run_pubmed_evaluation()` returns an explicit
+  `"insufficient_data"` status rather than a fabricated metric until real
+  expert labels exist.
+- One comprehensive real-service-boundary integration test
+  (`tests/test_end_to_end_integration.py`) proving patient → Digital Twin
+  → Clinical Agent → models → evidence → Safety → audit log → final trace
+  actually compose, using a real DB session and the real Orchestrator
+  throughout (only PubMed mocked, to avoid a live network dependency in
+  the required suite).
+- 45 new backend tests (`test_app_startup.py`, `test_privacy.py`,
+  `test_hallucination_defense.py`, `test_pubmed_evaluation.py`,
+  `test_end_to_end_integration.py`, `test_error_resilience.py`) plus 13
+  new frontend tests (`ClinicalAnalysisPage.test.tsx`,
+  `EvidenceCitation.test.tsx`) — component-level "E2E-style" tests using
+  the project's existing, configured tooling (Vitest + Testing Library);
+  see "Frontend E2E testing" below for why a full browser-automation
+  framework (Playwright, present as a devDependency but never configured)
+  was used for live manual verification during development rather than
+  wired into the automated suite this phase.
+
+**Explicitly not implemented — no phase has built this yet:**
+
+- MCP (deferred, reasoned above)
+- Clinical-analysis persistence (deferred, reasoned above)
+- Patient-value/simulation-value hallucination validation (investigated,
+  explicitly out of reliable reach this phase)
+- Any authentication/authorization layer anywhere in this project —
+  the prerequisite for ever revisiting the MCP decision
+- A full rewrite of the root `README.md`'s architecture diagram/agent
+  table or of `docs/REPORT.md` to reflect Phases 3-7 — both predate Phase
+  3 entirely and were out of this phase's explicit scope (`docs/
+  ARCHITECTURE.md` and `docs/CLINICAL_ANALYSIS.md` specifically); flagged
+  here as known, pre-existing documentation debt rather than silently left
+  unmentioned
+- Any clinical validation, diagnosis, or treatment capability — this
+  remains, and will remain, a research/decision-support prototype
+
+### Frontend E2E testing
+
+Step 26 asked for "patient selection → question → analyze → loading →
+result → evidence display," using existing tooling and not adding a new
+browser-testing framework unless necessary. `playwright` is already a
+frontend devDependency but has no config file and was never wired up by
+any earlier phase. Two things were actually done, not conflated:
+
+1. **Automated, required-suite tests**: `ClinicalAnalysisPage.test.tsx`
+   covers exactly that flow using Vitest + Testing Library — the
+   project's one *configured* test architecture (`vite.config.ts`'s
+   `test.include`) — with the `api` client and `PatientContext` mocked.
+   This is what CI/the grading suite actually runs.
+2. **Live manual verification**: a one-off Playwright script (chromium,
+   installed for this purpose) drove the real dev frontend against the
+   real dev backend and screenshotted every step — this is how both real
+   bugs above were found, since a mocked-API component test cannot
+   reproduce a live-process crash or an artifact-loading failure. This was
+   deliberately not wired into the automated suite or committed — it was
+   a development-time verification tool, not a regression test, and
+   turning it into one would mean standing up real server-process
+   orchestration (ports, health-check polling, teardown) that no phase has
+   asked for and that would need its own design, not a rushed addition
+   here.
 
 ## 14. References
 

@@ -3,6 +3,19 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+# Must be imported before torch/sentence-transformers (pulled in lazily by
+# the RAG evidence store on first use, and by app.routers.ml at import
+# time). On macOS, xgboost links Homebrew's libomp while torch bundles its
+# own OpenMP runtime; whichever loads second segfaults the whole process
+# instead of just warning. This is a REAL crash, reproduced live: hitting
+# POST /api/clinical/analyze with include_model_comparison=True (the first
+# code path in a running server that imports xgboost) killed the entire
+# uvicorn process once sentence-transformers had already loaded torch for
+# an earlier request. tests/conftest.py already carries the identical fix
+# for the pytest process; this is the same fix for the actual application
+# entrypoint, since a live server has no equivalent conftest.py to rely on.
+import xgboost  # noqa: E402,F401
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text

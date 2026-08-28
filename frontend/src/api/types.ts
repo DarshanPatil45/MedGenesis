@@ -84,6 +84,7 @@ export interface Simulation {
 
 export interface EvidenceSource {
   text: string
+  document_id: string
   section: string
   title: string
   publisher: string
@@ -92,6 +93,8 @@ export interface EvidenceSource {
   license: string
   attribution: string
   score: number
+  source_type: string
+  doi: string
 }
 
 export interface CarePlan {
@@ -150,4 +153,76 @@ export interface AgentRun {
   chat: ChatResponse | null
   safety: Safety
   trace: string[]
+}
+
+// --- Phase 6/7: Clinical Analysis Agent ---
+
+export type ClaimType =
+  | 'patient_observation'
+  | 'model_observation'
+  | 'evidence_supported'
+  | 'inference'
+  | 'uncertainty'
+
+export interface ClinicalClaim {
+  claim: string
+  claim_type: ClaimType
+  evidence_ids: string[]
+}
+
+export interface ClinicalAnalysis {
+  patient_id: number
+  question: string
+  status: string
+  scope: string
+  patient_summary: ClinicalClaim[]
+  model_analysis: ClinicalClaim[]
+  evidence_findings: EvidenceSource[]
+  simulation: Simulation | null
+  integrated_analysis: ClinicalClaim[]
+  uncertainties: string[]
+  citations: string[]
+  safety_flags: string[]
+  unavailable_reason: string | null
+  generated_by: string
+  production_risk_tier: string | null
+  safety: Safety
+  trace: string[]
+}
+
+// --- Phase 2 Digital Twin endpoints (existed since Phase 2, first
+// consumed by the frontend in Phase 7's Clinical Analysis page) ---
+
+export interface LabRecord {
+  test_name: string
+  value: number
+  unit?: string
+  recorded_at: string
+  [key: string]: unknown
+}
+
+export type LabTrendLabel = 'no_data' | 'insufficient_data' | 'stable' | 'increasing' | 'decreasing' | 'mixed'
+
+export interface LabTrend {
+  test_name: string
+  latest: LabRecord | null
+  history: LabRecord[]
+  trend: LabTrendLabel
+}
+
+export interface MedicationRecord {
+  medication_name: string
+  action: string
+  dose?: string
+  recorded_at: string
+  [key: string]: unknown
+}
+
+export interface DigitalTwin {
+  patient: Record<string, unknown>
+  clinical: Record<string, unknown>
+  laboratory: { latest: Record<string, LabRecord>; history: LabRecord[] }
+  medications: { current: MedicationRecord[]; history: MedicationRecord[] }
+  lifestyle: Record<string, unknown>
+  timeline: Record<string, unknown>[]
 }

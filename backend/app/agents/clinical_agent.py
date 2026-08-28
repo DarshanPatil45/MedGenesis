@@ -39,6 +39,7 @@ from app.agents.screening_agent import (
     EDUCATIONAL_SCOPE,
     STATUS_SCORED,
     STATUS_UNAVAILABLE,
+    ModelArtifactsMissing,
     check_eligibility,
     get_screening_agent,
 )
@@ -279,17 +280,41 @@ def _rf_model_claims(rf_result) -> list[ClinicalClaim]:
     return claims
 
 
-def _xgboost_model_claims(twin_state: dict[str, Any]) -> tuple[list[ClinicalClaim], str | None, str | None]:
+def _xgboost_model_claims(
+    twin_state: dict[str, Any],
+) -> tuple[list[ClinicalClaim], str | None, str | None, float | None]:
     """Real per-patient SHAP contributions — not the aggregate training-time
     importances — computed by reusing the already-loaded XGBoost artifacts
     (never retrained, never reloaded redundantly). Returns
-    (claims, model_version, risk_tier) — the tier is returned directly
-    rather than parsed back out of a rendered sentence."""
+    (claims, model_version, risk_tier, score) — the tier and raw score are
+    returned directly rather than parsed back out of a rendered sentence;
+    `score` feeds Phase 7's numeric hallucination check (_validate_numeric_score_claims)."""
     from app.ml.xgboost_model import explain
-    from app.ml.xgboost_model.predict import XGBoostPredictionService, _load_artifacts, _resolve_feature_vector
+    from app.ml.xgboost_model.predict import (
+        ModelArtifactsMissing,
+        XGBoostPredictionService,
+        _load_artifacts,
+        _resolve_feature_vector,
+    )
 
     claims: list[ClinicalClaim] = []
-    result = XGBoostPredictionService().predict(twin_state)
+    try:
+        result = XGBoostPredictionService().predict(twin_state)
+    except ModelArtifactsMissing:
+        # Fail safely (Phase 7 Step 29): a missing candidate-model artifact
+        # must not take down the whole analysis — the production
+        # RandomForest result, patient data, and evidence are all still
+        # genuinely valid and must still be returned. Same principle as
+        # get_store()'s ChromaDB-init fallback and _model_comparison_claim()'s
+        # FileNotFoundError handling just below.
+        claims.append(
+            ClinicalClaim(
+                "The XGBoost candidate model is unavailable (its trained artifacts were not found) "
+                "— this analysis proceeds with the production RandomForest model only.",
+                CLAIM_UNCERTAINTY,
+            )
+        )
+        return claims, None, None, None
     model_version = result.model_version
     if result.status != STATUS_SCORED:
         claims.append(
@@ -299,7 +324,7 @@ def _xgboost_model_claims(twin_state: dict[str, Any]) -> tuple[list[ClinicalClai
                 CLAIM_UNCERTAINTY,
             )
         )
-        return claims, model_version, None
+        return claims, model_version, None, None
 
     claims.append(
         ClinicalClaim(
@@ -331,7 +356,7 @@ def _xgboost_model_claims(twin_state: dict[str, Any]) -> tuple[list[ClinicalClai
         # rest of the analysis (same resilience principle as get_store()'s
         # backend fallback).
         pass
-    return claims, model_version, result.risk_tier
+    return claims, model_version, result.risk_tier, result.score
 
 
 def _model_comparison_claim() -> ClinicalClaim | None:
@@ -376,6 +401,74 @@ def _validate_citations(text: str, known_ids: set[str]) -> tuple[str, list[str]]
     return EVIDENCE_ID_PATTERN.sub(_check, text), flags
 
 
+# Phase 7 Step 20-23: hallucination defense expansion beyond Evidence IDs.
+#
+# Scope, stated explicitly per Step 20's "if validation cannot reliably
+# detect a claim, do not pretend that it can": model-NAME validation
+# (below) is reliable — "was XGBoost actually included" is a clean boolean
+# check with no ambiguity. Model-SCORE validation is scoped tightly to
+# numbers that directly follow a score-claim trigger phrase ("score of",
+# "assigned a score", "probability of"), not every decimal in the text —
+# broader patient-value validation (BMI/HbA1c/blood pressure/age) was
+# investigated and NOT implemented: those numbers appear all over a
+# generated analysis legitimately (quoted from patient_summary), and
+# without much more sophisticated parsing there is no reliable way to
+# tell "a hallucinated BMI" from "the real BMI the LLM correctly quoted"
+# — attempting it would produce more false positives than genuine catches,
+# which is worse than not validating at all. This boundary is
+# deliberate, not an oversight (docs/CLINICAL_ANALYSIS.md "Hallucination
+# defense").
+MODEL_SCORE_CLAIM_PATTERN = re.compile(
+    r"(?:score of|assigned a score|probability of)\D{0,5}?(\d+\.?\d*)\s*(%)?", re.IGNORECASE
+)
+# Phase 7 Step 21: covers standard rounding to 2 significant figures or the
+# nearest whole percent (e.g. an actual 0.8255 stated as "0.83" or "83%" is
+# within tolerance; an actual ~0.6 stated as "0.99" is not).
+SCORE_TOLERANCE = 0.015
+
+
+def _validate_model_name_claims(text: str, xgboost_included: bool) -> list[str]:
+    """RandomForest is always actually run by this agent, so a
+    RandomForest mention is never flagged. XGBoost is opt-in
+    (include_model_comparison=True) — a mention when it was never run is a
+    hallucinated model reference. Flags only; never strips (a model name
+    is prose, not a bracketed marker — deleting it could mangle a
+    sentence the way stripping "[E5]" cannot)."""
+    if "xgboost" in text.lower() and not xgboost_included:
+        return [
+            "Generated text mentions XGBoost, but the candidate model was not included in this "
+            "analysis — flagged as a potentially hallucinated model reference."
+        ]
+    return []
+
+
+def _validate_numeric_score_claims(text: str, known_scores: set[float]) -> list[str]:
+    """Flags (never strips — see module comment above) a stated model
+    score that doesn't match any score this analysis actually computed,
+    within SCORE_TOLERANCE. If no real scores were computed at all
+    (known_scores empty), nothing can be verified either way — flags
+    nothing, rather than flagging every number as suspicious."""
+    if not known_scores:
+        return []
+    flags: list[str] = []
+    for match in MODEL_SCORE_CLAIM_PATTERN.finditer(text):
+        raw, is_percent = match.group(1), match.group(2)
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if is_percent or value > 1.0:
+            value = value / 100
+        if not (0.0 <= value <= 1.0):
+            continue  # not plausibly a probability/score at all
+        if not any(abs(value - known) <= SCORE_TOLERANCE for known in known_scores):
+            flags.append(
+                f"Generated text states a model score ({raw}{'%' if is_percent else ''}) that does not "
+                "match any score this analysis actually computed — flagged for review, not removed."
+            )
+    return flags
+
+
 def _split_into_claims(text: str, known_ids: set[str]) -> list[ClinicalClaim]:
     """Splits an already citation-validated LLM reply into sentence-level
     claims, classifying each deterministically by whether it cites an
@@ -413,7 +506,22 @@ class ClinicalAnalysisAgent:
         use_llm: bool = True,
     ) -> ClinicalAnalysisResult:
         eligible, reason = check_eligibility(twin_state)
-        rf_result = get_screening_agent().run(twin_state)
+        try:
+            rf_result = get_screening_agent().run(twin_state)
+        except ModelArtifactsMissing:
+            # Fail safely (Phase 7 Step 29): even the production model
+            # being unavailable must not crash the whole analysis — patient
+            # data and evidence are still genuinely valid and must still be
+            # returned. Reuses ScreeningResult's own "unavailable" shape
+            # rather than inventing a second one; ScreeningAgent.run()
+            # itself is untouched, so /api/screening/run's own behavior
+            # for this scenario is completely unaffected by this change.
+            from app.agents.screening_agent import ScreeningResult
+
+            rf_result = ScreeningResult(
+                status=STATUS_UNAVAILABLE,
+                unavailable_reason="The production screening model's trained artifacts were not found.",
+            )
 
         rf_metadata: dict[str, Any] = {}
         try:
@@ -436,10 +544,16 @@ class ClinicalAnalysisAgent:
             if trend_claim:
                 patient_summary.append(trend_claim)
 
+        known_scores: set[float] = set()
+        if rf_result.status == STATUS_SCORED:
+            known_scores.add(rf_result.risk_probability)
+
         model_analysis = _rf_model_claims(rf_result)
         if include_model_comparison:
-            xgb_claims, _xgboost_version, xgb_tier = _xgboost_model_claims(twin_state)
+            xgb_claims, _xgboost_version, xgb_tier, xgb_score = _xgboost_model_claims(twin_state)
             model_analysis.extend(xgb_claims)
+            if xgb_score is not None:
+                known_scores.add(xgb_score)
             comparison_claim = _model_comparison_claim()
             if comparison_claim:
                 model_analysis.append(comparison_claim)
@@ -522,7 +636,8 @@ class ClinicalAnalysisAgent:
             uncertainties.append(f"The analysis is limited by missing patient data: {reason}")
 
         integrated_analysis, generated_by, llm_flags = self._synthesize(
-            question, patient_summary, model_analysis, evidence_id_map, use_llm
+            question, patient_summary, model_analysis, evidence_id_map, use_llm,
+            known_scores=known_scores, xgboost_included=include_model_comparison,
         )
 
         return ClinicalAnalysisResult(
@@ -547,6 +662,9 @@ class ClinicalAnalysisAgent:
         model_analysis: list[ClinicalClaim],
         evidence_id_map: dict[str, Any],
         use_llm: bool,
+        *,
+        known_scores: set[float] | None = None,
+        xgboost_included: bool = False,
     ) -> tuple[list[ClinicalClaim], str, list[str]]:
         """Returns (integrated_analysis claims, generated_by, safety_flags).
         integrated_analysis is where claim_type "inference"/"evidence_supported"
@@ -557,6 +675,8 @@ class ClinicalAnalysisAgent:
             reply = get_llm().generate(CLINICAL_SYSTEM_PROMPT, prompt)
             if reply:
                 validated, flags = _validate_citations(reply, set(evidence_id_map))
+                flags += _validate_model_name_claims(validated, xgboost_included)
+                flags += _validate_numeric_score_claims(validated, known_scores or set())
                 claims = _split_into_claims(validated, set(evidence_id_map))
                 return claims, "rules+llm", flags
 
@@ -583,7 +703,14 @@ class ClinicalAnalysisAgent:
     def _llm_prompt(question, patient_summary, model_analysis, evidence_id_map) -> str:
         patient_block = "\n".join(f"- {c.claim}" for c in patient_summary) or "(none on record)"
         model_block = "\n".join(f"- {c.claim}" for c in model_analysis) or "(no model output available)"
-        evidence_block = "\n\n".join(f"[{eid}] {chunk.citation_block}" for eid, chunk in evidence_id_map.items())
+        # The excerpt text itself, not just citation metadata — without it
+        # the LLM has nothing real to ground a claim in, only a title/URL
+        # to cite from memory (which is exactly the fabrication risk this
+        # whole pipeline exists to prevent). citation_block supplies the
+        # metadata half; chunk.text supplies the substance.
+        evidence_block = "\n\n".join(
+            f"[{eid}] Excerpt: {chunk.text}\n{chunk.citation_block}" for eid, chunk in evidence_id_map.items()
+        )
         return (
             f"PATIENT DATA:\n{patient_block}\n\n"
             f"MODEL OUTPUT AND MODEL FEATURE CONTRIBUTIONS:\n{model_block}\n\n"

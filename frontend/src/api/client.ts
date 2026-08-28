@@ -3,8 +3,11 @@ import type {
   AuditLogRow,
   CarePlan,
   ChatResponse,
+  ClinicalAnalysis,
   DemoProfile,
+  DigitalTwin,
   Health,
+  LabTrend,
   Patient,
   Screening,
   Simulation,
@@ -70,6 +73,9 @@ export const api = {
   timeline: (patientId: number) => request<Timeline>(`/api/twin/${patientId}/timeline`),
   appendEvent: (patientId: number, body: { event_type: string; payload: Record<string, unknown> }) =>
     post(`/api/twin/${patientId}/events`, { ...body, source: 'real' }),
+  digitalTwin: (patientId: number) => request<DigitalTwin>(`/api/twin/${patientId}/digital-twin`),
+  labTrend: (patientId: number, testName: string) =>
+    request<LabTrend>(`/api/twin/${patientId}/labs/${encodeURIComponent(testName)}`),
 
   runScreening: (patientId: number) => post<Screening>('/api/screening/run', { patient_id: patientId }),
   simulate: (patientId: number, hypothesis: Record<string, number>, text?: string) =>
@@ -85,6 +91,26 @@ export const api = {
     }),
   runPipeline: (patientId: number, mode: string) =>
     post<AgentRun>('/api/agents/run', { patient_id: patientId, mode, use_llm: true }),
+
+  analyzeClinical: (
+    patientId: number,
+    question: string,
+    options: {
+      includeEvidence: boolean
+      includePubmed: boolean
+      includeModelComparison: boolean
+      includeSimulation: boolean
+    },
+  ) =>
+    post<ClinicalAnalysis>('/api/clinical/analyze', {
+      patient_id: patientId,
+      question,
+      include_evidence: options.includeEvidence,
+      include_pubmed: options.includePubmed,
+      include_model_comparison: options.includeModelComparison,
+      include_simulation: options.includeSimulation,
+      use_llm: true,
+    }),
 
   auditLog: () => request<AuditLogRow[]>('/api/safety/audit-log?limit=200'),
   safetyPolicy: () => request<Record<string, unknown>>('/api/safety/policy'),
