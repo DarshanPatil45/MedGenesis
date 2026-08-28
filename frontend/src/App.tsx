@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { api } from './api/client'
 import type { Health } from './api/types'
@@ -22,6 +22,44 @@ const NAV = [
   { to: '/clinical-analysis', label: 'Clinical Analysis' },
   { to: '/trace', label: 'Agent Trace & Safety' },
 ]
+
+const THEME_KEY = 'medgenesis.theme'
+type Theme = 'light' | 'dark'
+
+function getStoredTheme(): Theme | null {
+  try {
+    const raw = localStorage.getItem(THEME_KEY)
+    return raw === 'light' || raw === 'dark' ? raw : null
+  } catch {
+    return null
+  }
+}
+
+function useTheme() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = getStoredTheme()
+    if (stored) return stored
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
+
+  const toggle = useCallback(() => {
+    setTheme((current) => {
+      const next = current === 'dark' ? 'light' : 'dark'
+      try {
+        localStorage.setItem(THEME_KEY, next)
+      } catch {
+        /* private browsing — preference just won't persist */
+      }
+      return next
+    })
+  }, [])
+
+  return { theme, toggle }
+}
 
 function PatientSwitcher() {
   const { patients, selected, selectPatient } = usePatients()
@@ -47,6 +85,7 @@ function Shell() {
   const [health, setHealth] = useState<Health | null>(null)
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
+  const { theme, toggle: toggleTheme } = useTheme()
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null))
@@ -60,10 +99,24 @@ function Shell() {
 
   return (
     <div className="app">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <aside className={`sidebar${navOpen ? ' nav-open' : ''}`}>
         <div className="brand">
-          MedGenesis
-          <small>Agentic AI for Type 2 Diabetes education. Not a diagnostic device.</small>
+          <span className="brand-text">
+            MedGenesis
+            <small>Agentic AI for Type 2 Diabetes education. Not a diagnostic device.</small>
+          </span>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          >
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
         </div>
         <button
           type="button"
@@ -75,7 +128,7 @@ function Shell() {
           Menu {navOpen ? '▾' : '▸'}
         </button>
         <PatientSwitcher />
-        <nav className="nav" id="primary-nav">
+        <nav className="nav" id="primary-nav" aria-label="Primary">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end}>
               {item.label}
@@ -96,7 +149,7 @@ function Shell() {
           )}
         </div>
       </aside>
-      <main className="main">
+      <main className="main" id="main-content" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<IntakePage />} />
           <Route path="/timeline" element={<TimelinePage />} />

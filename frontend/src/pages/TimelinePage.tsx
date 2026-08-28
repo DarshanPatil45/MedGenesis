@@ -105,6 +105,7 @@ export function TimelinePage() {
       </Card>
 
       <Card title={`Event log (${timeline?.events.length ?? 0} events, append-only)`}>
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -133,6 +134,7 @@ export function TimelinePage() {
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
     </>
   )

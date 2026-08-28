@@ -263,6 +263,7 @@ export function SimulatorPage() {
               </Card>
 
               <Card title="Projected points">
+                <div className="table-scroll">
                 <table>
                   <thead>
                     <tr>
@@ -289,6 +290,7 @@ export function SimulatorPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </Card>
 
               <Card title="Delta model assumptions">

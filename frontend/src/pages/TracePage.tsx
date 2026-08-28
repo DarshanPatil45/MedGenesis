@@ -10,6 +10,8 @@ const STATUS_CLASS: Record<string, string> = {
   BLOCKED: 'high',
 }
 
+const STATUS_FILTERS = ['all', 'APPROVED', 'FLAGGED_FOR_CLINICIAN_REVIEW', 'BLOCKED'] as const
+
 export function TracePage() {
   const { selected } = usePatients()
   const [run, setRun] = useState<AgentRun | null>(null)
@@ -17,6 +19,7 @@ export function TracePage() {
   const [policy, setPolicy] = useState<Record<string, unknown> | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>('all')
 
   const loadLog = useCallback(async () => {
     try {
@@ -44,6 +47,8 @@ export function TracePage() {
       setBusy(false)
     }
   }
+
+  const filteredLog = statusFilter === 'all' ? log : log.filter((row) => row.status === statusFilter)
 
   return (
     <>
@@ -83,6 +88,31 @@ export function TracePage() {
       )}
 
       <Card title={`Safety audit log (${log.length} entries)`}>
+        <div className="filter-row">
+          <label htmlFor="audit-status-filter" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}>
+            Filter by status
+            <select
+              id="audit-status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as (typeof STATUS_FILTERS)[number])}
+            >
+              {STATUS_FILTERS.map((s) => (
+                <option key={s} value={s}>
+                  {s === 'all' ? 'All statuses' : s}
+                </option>
+              ))}
+            </select>
+          </label>
+          {statusFilter !== 'all' && (
+            <span className="muted">
+              {filteredLog.length} of {log.length} shown
+            </span>
+          )}
+        </div>
+        {filteredLog.length === 0 ? (
+          <p className="muted">No audit entries match this filter.</p>
+        ) : (
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -95,7 +125,7 @@ export function TracePage() {
             </tr>
           </thead>
           <tbody>
-            {log.map((row) => (
+            {filteredLog.map((row) => (
               <tr key={row.id}>
                 <td>{row.id}</td>
                 <td>{new Date(row.reviewed_at).toLocaleString()}</td>
@@ -123,6 +153,8 @@ export function TracePage() {
             ))}
           </tbody>
         </table>
+        </div>
+        )}
       </Card>
 
       {policy && (

@@ -90,6 +90,7 @@ export function IntakePage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [patientFilter, setPatientFilter] = useState('')
 
   useEffect(() => {
     api.demoProfiles().then(setProfiles).catch(() => setProfiles({}))
@@ -140,6 +141,11 @@ export function IntakePage() {
       setBusy(false)
     }
   }
+
+  const needle = patientFilter.trim().toLowerCase()
+  const filteredPatients = needle
+    ? patients.filter((p) => String(p.id).includes(needle) || p.pseudonym.toLowerCase().includes(needle))
+    : patients
 
   const checkbox = (key: (typeof CHECKBOX_FIELDS)[number][0], label: string) => (
     <label key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
@@ -302,42 +308,67 @@ export function IntakePage() {
       </Card>
 
       <Card title={`Patients (${patients.length})`}>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Pseudonym</th>
-              <th>Age</th>
-              <th>Sex</th>
-              <th>Screening eligible</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {patients.map((p) => (
-              <tr key={p.id}>
-                <td>{p.id}</td>
-                <td>{p.pseudonym}</td>
-                <td>{p.age}</td>
-                <td>{p.sex}</td>
-                <td>
-                  <span className={`badge ${p.screening_eligible ? 'low' : 'neutral'}`}>
-                    {p.screening_eligible ? 'yes' : 'no'}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    className="secondary"
-                    onClick={() => selectPatient(p.id)}
-                    disabled={selected?.id === p.id}
-                  >
-                    {selected?.id === p.id ? 'Active' : 'Select'}
-                  </button>
-                </td>
+        {patients.length > 5 && (
+          <div className="filter-row">
+            <label htmlFor="patient-filter" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}>
+              Filter
+              <input
+                id="patient-filter"
+                type="search"
+                placeholder="Search by ID or pseudonym…"
+                value={patientFilter}
+                onChange={(e) => setPatientFilter(e.target.value)}
+              />
+            </label>
+            {patientFilter && (
+              <span className="muted">
+                {filteredPatients.length} of {patients.length} shown
+              </span>
+            )}
+          </div>
+        )}
+        {filteredPatients.length === 0 ? (
+          <p className="muted">No patients match "{patientFilter}".</p>
+        ) : (
+          <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Pseudonym</th>
+                <th>Age</th>
+                <th>Sex</th>
+                <th>Screening eligible</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredPatients.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.id}</td>
+                  <td>{p.pseudonym}</td>
+                  <td>{p.age}</td>
+                  <td>{p.sex}</td>
+                  <td>
+                    <span className={`badge ${p.screening_eligible ? 'low' : 'neutral'}`}>
+                      {p.screening_eligible ? 'yes' : 'no'}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      className="secondary"
+                      onClick={() => selectPatient(p.id)}
+                      disabled={selected?.id === p.id}
+                    >
+                      {selected?.id === p.id ? 'Active' : 'Select'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
       </Card>
     </>
   )
