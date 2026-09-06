@@ -1,9 +1,24 @@
+import {
+  ArrowRight,
+  Banknote,
+  CircleAlert,
+  ClipboardPlus,
+  Footprints,
+  HeartPulse,
+  ShieldPlus,
+  Sparkles,
+  UserCheck,
+  UserRoundPlus,
+  Users,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import type { DemoProfile } from '../api/types'
 import { usePatients } from '../PatientContext'
-import { Card, ErrorNote } from '../components/common'
+import { ErrorNote } from '../components/common'
 import { ScopeDisclaimer } from '../components/SafetyBanner'
+
+const STEPS = ['Patient', 'Demographics', 'Health signals', 'Digital Twin']
 
 const CONDITION_FIELDS = [
   ['high_bp', 'High blood pressure'],
@@ -160,32 +175,61 @@ export function IntakePage() {
 
   return (
     <>
-      <h1>Patient Intake</h1>
-      <p className="muted">
-        Create a synthetic patient or load a pre-seeded demo profile with six months of history.
-        All data in this system is synthetic — never real patient data. The intake fields below
-        mirror the CDC BRFSS survey questions the screening model was trained on.
-      </p>
+      <div className="section-block">
+        <span className="eyebrow">
+          <Sparkles /> Digital Twin setup
+        </span>
+        <h1 className="section-title">Create Patient Digital Twin</h1>
+        <p className="section-lead">
+          Load a synthetic patient or create one. All data in this system is synthetic — never
+          real patient data. The intake fields below mirror the CDC BRFSS survey questions the
+          screening model was trained on.
+        </p>
+        <div className="step-flow" aria-hidden="true">
+          {STEPS.map((step, i) => (
+            <span key={step} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              {i > 0 && <ArrowRight size={11} className="step-flow-arrow" />}
+              <span className="step-flow-item">
+                <span className="step-flow-num">{i + 1}</span>
+                {step}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
       <ScopeDisclaimer />
       <ErrorNote error={error} />
 
-      <Card title="Load a synthetic demo patient">
-        <p className="muted">
+      <div className="section-block">
+        <span className="micro-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UserRoundPlus size={13} /> Load a synthetic demo patient
+        </span>
+        <p className="muted" style={{ marginTop: 0 }}>
           Profile C deliberately has an incomplete recorded history. That is a designed
           behaviour, not a bug — the screening agent refuses to guess at missing measurements
           rather than produce a confident-looking, meaningless score.
         </p>
-        <div className="row">
+        <div className="grid-2">
           {Object.entries(profiles).map(([key, profile]) => (
-            <button key={key} onClick={() => loadDemo(key)} disabled={busy} className="secondary">
-              {profile.pseudonym}
-              {profile.screening_eligible ? '' : ' · not screenable'}
+            <button key={key} type="button" className="tile" onClick={() => loadDemo(key)} disabled={busy}>
+              <span className="tile-icon" aria-hidden="true">
+                {profile.screening_eligible ? <UserCheck size={16} /> : <CircleAlert size={16} />}
+              </span>
+              <span className="tile-body">
+                <span className="tile-title">{profile.pseudonym}</span>
+                <span className="tile-desc">
+                  {profile.screening_eligible ? 'Screening-eligible' : 'Not screenable — incomplete history'}
+                </span>
+              </span>
             </button>
           ))}
         </div>
-      </Card>
+      </div>
 
-      <Card title="Create a patient manually">
+      <div className="section-block">
+        <span className="micro-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <ClipboardPlus size={13} /> Create a patient manually
+        </span>
         <form onSubmit={submit}>
           <div className="grid-2">
             <label>
@@ -226,7 +270,9 @@ export function IntakePage() {
             </label>
           </div>
 
-          <h3 style={{ marginTop: '1.1rem' }}>General health</h3>
+          <h3 className="row" style={{ marginTop: '1.3rem', gap: '0.4rem' }}>
+            <HeartPulse size={15} style={{ color: 'var(--brand)' }} /> General health
+          </h3>
           <div className="grid-2">
             <label>
               Self-rated general health
@@ -263,16 +309,24 @@ export function IntakePage() {
             </label>
           </div>
 
-          <h3 style={{ marginTop: '1.1rem' }}>Conditions</h3>
+          <h3 className="row" style={{ marginTop: '1.3rem', gap: '0.4rem' }}>
+            <ClipboardPlus size={15} style={{ color: 'var(--brand)' }} /> Conditions
+          </h3>
           <div className="grid-2">{CONDITION_FIELDS.map(([k, l]) => checkbox(k, l))}</div>
 
-          <h3 style={{ marginTop: '1.1rem' }}>Lifestyle</h3>
+          <h3 className="row" style={{ marginTop: '1.3rem', gap: '0.4rem' }}>
+            <Footprints size={15} style={{ color: 'var(--brand)' }} /> Lifestyle
+          </h3>
           <div className="grid-2">{LIFESTYLE_FIELDS.map(([k, l]) => checkbox(k, l))}</div>
 
-          <h3 style={{ marginTop: '1.1rem' }}>Healthcare access</h3>
+          <h3 className="row" style={{ marginTop: '1.3rem', gap: '0.4rem' }}>
+            <ShieldPlus size={15} style={{ color: 'var(--brand)' }} /> Healthcare access
+          </h3>
           <div className="grid-2">{HEALTHCARE_FIELDS.map(([k, l]) => checkbox(k, l))}</div>
 
-          <h3 style={{ marginTop: '1.1rem' }}>Socioeconomic</h3>
+          <h3 className="row" style={{ marginTop: '1.3rem', gap: '0.4rem' }}>
+            <Banknote size={15} style={{ color: 'var(--brand)' }} /> Socioeconomic
+          </h3>
           <div className="grid-2">
             <label>
               Education level
@@ -299,15 +353,18 @@ export function IntakePage() {
             </label>
           </div>
 
-          <div style={{ marginTop: '0.9rem' }}>
+          <div style={{ marginTop: '1rem' }}>
             <button type="submit" disabled={busy}>
               Create patient
             </button>
           </div>
         </form>
-      </Card>
+      </div>
 
-      <Card title={`Patients (${patients.length})`}>
+      <div className="section-block">
+        <span className="micro-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Users size={13} /> Patients ({patients.length})
+        </span>
         {patients.length > 5 && (
           <div className="filter-row">
             <label htmlFor="patient-filter" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}>
@@ -369,7 +426,7 @@ export function IntakePage() {
           </table>
           </div>
         )}
-      </Card>
+      </div>
     </>
   )
 }

@@ -1,3 +1,4 @@
+import { Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import {
   CartesianGrid,
@@ -12,8 +13,9 @@ import {
 import { api } from '../api/client'
 import type { Simulation } from '../api/types'
 import { usePatients } from '../PatientContext'
-import { AgentTrace, Card, ErrorNote, RiskBadge } from '../components/common'
-import { SafetyBanner, ScopeDisclaimer } from '../components/SafetyBanner'
+import { AgentTrace, ErrorNote, RiskBadge } from '../components/common'
+import { SafetyStatus } from '../components/clinical/SafetyStatus'
+import { ScopeDisclaimer } from '../components/SafetyBanner'
 
 const PRESETS: { label: string; hypothesis: Record<string, number> }[] = [
   { label: 'Lose 5 kg over 12 weeks', hypothesis: { weight_kg_delta: -5, horizon_weeks: 12 } },
@@ -74,26 +76,32 @@ export function SimulatorPage() {
   if (!selected) return <p className="muted">Select a patient on the Intake page first.</p>
 
   const baseline = result?.trajectory[0]?.risk_probability
+  const final = result?.trajectory[result.trajectory.length - 1]
 
   return (
     <>
-      <h1>What-if Simulator</h1>
-      <p className="muted">
-        Forks a copy of the digital twin, applies a transparent delta model, and re-scores each
-        projected week. The real timeline is never modified.
-      </p>
+      <div className="section-block">
+        <span className="eyebrow">
+          <Sparkles /> Transparent delta model
+        </span>
+        <h1 className="section-title">What-if Lab</h1>
+        <p className="section-lead">
+          Explore modeled scenarios without touching the patient's Digital Twin. Forks a copy,
+          applies a transparent delta model, and re-scores each projected week — the real
+          timeline is never modified.
+        </p>
+      </div>
       <ScopeDisclaimer />
       <ErrorNote error={error} />
 
-      <Card title="Describe a scenario in your own words">
-        <p className="muted" style={{ marginTop: 0 }}>
-          A small deterministic parser — not an LLM — maps phrases like these to a structured
-          change. If it can't confidently understand your text, it says so rather than guessing;
-          try a preset or the custom fields below instead.
-        </p>
+      <div className="command-bar" style={{ marginBottom: 'var(--space-5)' }}>
+        <label htmlFor="scenario-text" style={{ display: 'block', marginBottom: '0.4rem' }}>
+          Describe a scenario in your own words
+        </label>
         <div className="row">
           <input
-            style={{ flex: 1, minWidth: 280 }}
+            id="scenario-text"
+            style={{ flex: 1, minWidth: 240 }}
             value={scenarioText}
             placeholder="e.g. what if I lost weight and exercised more"
             onChange={(e) => setScenarioText(e.target.value)}
@@ -102,14 +110,19 @@ export function SimulatorPage() {
             }}
           />
           <button onClick={() => runText(scenarioText)} disabled={busy || !scenarioText.trim()}>
-            {busy ? 'Parsing…' : 'Parse & run'}
+            {busy ? 'Parsing…' : 'Run scenario →'}
           </button>
         </div>
-        <div className="row" style={{ marginTop: '0.6rem' }}>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          A small deterministic parser — not an LLM — maps phrases like these to a structured
+          change. If it can't confidently understand your text, it says so rather than guessing.
+        </p>
+        <div className="chip-row">
           {TEXT_EXAMPLES.map((ex) => (
             <button
               key={ex}
-              className="secondary"
+              type="button"
+              className="chip"
               disabled={busy}
               onClick={() => {
                 setScenarioText(ex)
@@ -120,24 +133,21 @@ export function SimulatorPage() {
             </button>
           ))}
         </div>
-      </Card>
+      </div>
 
-      <Card title="Preset scenarios">
-        <div className="row">
+      <div className="section-block">
+        <span className="micro-label">Preset scenarios</span>
+        <div className="chip-row">
           {PRESETS.map((p) => (
-            <button
-              key={p.label}
-              className="secondary"
-              disabled={busy}
-              onClick={() => runWith(p.hypothesis)}
-            >
+            <button key={p.label} type="button" className="chip" disabled={busy} onClick={() => runWith(p.hypothesis)}>
               {p.label}
             </button>
           ))}
         </div>
-      </Card>
+      </div>
 
-      <Card title="Custom hypothesis">
+      <div className="section-block">
+        <span className="micro-label">Custom hypothesis</span>
         <div className="grid-2">
           <label>
             Weight change (kg)
@@ -190,69 +200,93 @@ export function SimulatorPage() {
             />
           </label>
         </div>
-        <div style={{ marginTop: '0.9rem' }}>
+        <div style={{ marginTop: '1rem' }}>
           <button onClick={runForm} disabled={busy}>
-            {busy ? 'Projecting…' : 'Run simulation'}
+            {busy ? 'Projecting…' : 'Run scenario →'}
           </button>
         </div>
-      </Card>
+      </div>
 
       {result && (
         <>
-          <SafetyBanner safety={result.safety} />
+          <SafetyStatus safety={result.safety} />
 
           {result.status === 'unavailable_for_profile' ? (
-            <Card title="Simulation not run">
+            <div className="section-block">
+              <h2 className="section-title" style={{ fontSize: '1.2rem' }}>
+                Simulation not run
+              </h2>
               <p>{result.unavailable_reason}</p>
-            </Card>
+            </div>
           ) : (
             <>
-              <Card title="Projected risk trajectory">
+              <div className="section-block">
+                <span className="micro-label">Baseline vs scenario</span>
                 <p className="muted" style={{ marginTop: 0 }}>
                   <strong>{result.label}.</strong> This shows how the trained model responds to
                   changed inputs — not a forecast of real clinical outcomes.
                 </p>
+                {result.trajectory.length > 1 && final && (
+                  <div className="metric-cluster" style={{ marginBottom: 'var(--space-4)' }}>
+                    <div className="metric-cluster-item">
+                      <span className="metric-cluster-label">Baseline · week {result.trajectory[0].week}</span>
+                      <span className="metric-cluster-value">{(baseline! * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="metric-cluster-item">
+                      <span className="metric-cluster-label">Simulated · week {final.week}</span>
+                      <span className="metric-cluster-value">{(final.risk_probability * 100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                )}
                 <div style={{ width: '100%', height: 300 }}>
                   <ResponsiveContainer>
                     <LineChart
                       data={result.trajectory}
                       margin={{ top: 8, right: 74, bottom: 8, left: -8 }}
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e6ebf2" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                       <XAxis
                         dataKey="week"
                         fontSize={12}
-                        label={{ value: 'week', position: 'insideBottom', offset: -4, fontSize: 12 }}
+                        stroke="var(--muted)"
+                        label={{ value: 'week', position: 'insideBottom', offset: -4, fontSize: 12, fill: 'var(--muted)' }}
                       />
                       <YAxis
                         fontSize={12}
+                        stroke="var(--muted)"
                         domain={[0, 1]}
                         tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
                       />
                       <Tooltip
                         formatter={(v) => `${(Number(v) * 100).toFixed(1)}%`}
                         labelFormatter={(l) => `Week ${l}`}
+                        contentStyle={{
+                          background: 'var(--surface-solid)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 8,
+                          fontSize: '0.82rem',
+                        }}
                       />
                       {baseline !== undefined && (
                         <ReferenceLine
                           y={baseline}
-                          stroke="#8896a8"
+                          stroke="var(--muted)"
                           strokeDasharray="4 4"
                           label={{
                             value: 'baseline',
                             fontSize: 11,
                             position: 'right',
-                            fill: '#5c6a7f',
+                            fill: 'var(--muted)',
                           }}
                         />
                       )}
-                      <ReferenceLine y={0.33} stroke="#8dc7aa" strokeDasharray="2 4" />
-                      <ReferenceLine y={0.66} stroke="#e0ab4a" strokeDasharray="2 4" />
+                      <ReferenceLine y={0.33} stroke="var(--ok-border)" strokeDasharray="2 4" />
+                      <ReferenceLine y={0.66} stroke="var(--flag-border)" strokeDasharray="2 4" />
                       <Line
                         type="monotone"
                         dataKey="risk_probability"
-                        name="Projected risk"
-                        stroke="#1d6fa5"
+                        name="Simulated risk"
+                        stroke="var(--brand)"
                         strokeWidth={2.5}
                         dot={{ r: 4 }}
                       />
@@ -260,40 +294,44 @@ export function SimulatorPage() {
                   </ResponsiveContainer>
                 </div>
                 <p>{result.summary_text}</p>
-              </Card>
+              </div>
 
-              <Card title="Projected points">
+              <div className="section-block">
+                <span className="micro-label">Projected points</span>
                 <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Week</th>
-                      <th>Risk</th>
-                      <th>Tier</th>
-                      <th>BMI</th>
-                      <th>Physical activity</th>
-                      <th>Smoker</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.trajectory.map((p) => (
-                      <tr key={p.week}>
-                        <td>{p.week}</td>
-                        <td>{(p.risk_probability * 100).toFixed(1)}%</td>
-                        <td>
-                          <RiskBadge tier={p.risk_tier} />
-                        </td>
-                        <td>{p.bmi ?? '—'}</td>
-                        <td>{p.phys_activity != null ? `${(p.phys_activity * 100).toFixed(0)}%` : '—'}</td>
-                        <td>{p.smoker != null ? `${(p.smoker * 100).toFixed(0)}%` : '—'}</td>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Week</th>
+                        <th>Risk</th>
+                        <th>Tier</th>
+                        <th>BMI</th>
+                        <th>Physical activity</th>
+                        <th>Smoker</th>
+                        <th />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {result.trajectory.map((p) => (
+                        <tr key={p.week}>
+                          <td>{p.week}</td>
+                          <td>{(p.risk_probability * 100).toFixed(1)}%</td>
+                          <td>
+                            <RiskBadge tier={p.risk_tier} />
+                          </td>
+                          <td>{p.bmi ?? '—'}</td>
+                          <td>{p.phys_activity != null ? `${(p.phys_activity * 100).toFixed(0)}%` : '—'}</td>
+                          <td>{p.smoker != null ? `${(p.smoker * 100).toFixed(0)}%` : '—'}</td>
+                          <td>{p.simulated && <span className="badge neutral">simulated</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </Card>
+              </div>
 
-              <Card title="Delta model assumptions">
+              <div className="section-block">
+                <span className="micro-label">Delta model assumptions</span>
                 <p className="muted" style={{ marginTop: 0 }}>
                   The projection is a documented heuristic, not a validated physiological model.
                   Every assumption it applied is listed here.
@@ -303,13 +341,18 @@ export function SimulatorPage() {
                     <li key={i}>{a}</li>
                   ))}
                 </ul>
-              </Card>
+              </div>
             </>
           )}
 
-          <Card title="Agent trace">
-            <AgentTrace trace={result.trace} />
-          </Card>
+          <details className="card">
+            <summary className="row" style={{ gap: '0.5rem' }}>
+              Agent trace
+            </summary>
+            <div className="details-body">
+              <AgentTrace trace={result.trace} />
+            </div>
+          </details>
         </>
       )}
     </>

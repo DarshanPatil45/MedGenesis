@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -99,5 +99,74 @@ describe('App shell — skip link and landmarks', () => {
     renderApp()
     await screen.findByText('Skip to main content')
     expect(screen.getAllByRole('main')).toHaveLength(1)
+  })
+})
+
+describe('App shell — header', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.mocked(api.listPatients).mockResolvedValue([])
+    vi.mocked(api.demoProfiles).mockResolvedValue({})
+  })
+
+  it('shows the current page name in the header, matching the active route', async () => {
+    vi.mocked(api.health).mockResolvedValue({
+      status: 'ok',
+      database: 'sqlite (medgenesis.db)',
+      screening_model: 'screening-baseline-v3-brfss2015',
+      rag_backend: 'chromadb+sentence-transformers',
+      llm: 'unavailable — rule-based fallback',
+      policy_version: '1.1.0',
+    })
+    render(
+      <MemoryRouter initialEntries={['/clinical-analysis']}>
+        <App />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Skip to main content')
+    expect(document.querySelector('.app-header-page')?.textContent).toBe('Clinical Analysis')
+  })
+
+  it('shows a connected status dot when the backend is reachable', async () => {
+    vi.mocked(api.health).mockResolvedValue({
+      status: 'ok',
+      database: 'sqlite (medgenesis.db)',
+      screening_model: 'screening-baseline-v3-brfss2015',
+      rag_backend: 'chromadb+sentence-transformers',
+      llm: 'unavailable — rule-based fallback',
+      policy_version: '1.1.0',
+    })
+    renderApp()
+    expect(await screen.findByText('Backend connected')).toBeDefined()
+    expect(document.querySelector('.status-dot.down')).toBeNull()
+  })
+
+  it('shows an unreachable status dot when the health check fails', async () => {
+    vi.mocked(api.health).mockRejectedValue(new Error('network error'))
+    renderApp()
+    expect(await screen.findByText('Backend unreachable')).toBeDefined()
+    expect(document.querySelector('.status-dot.down')).not.toBeNull()
+  })
+
+  it('opens and closes the mobile nav drawer from the header toggle', async () => {
+    vi.mocked(api.health).mockResolvedValue({
+      status: 'ok',
+      database: 'sqlite (medgenesis.db)',
+      screening_model: 'screening-baseline-v3-brfss2015',
+      rag_backend: 'chromadb+sentence-transformers',
+      llm: 'unavailable — rule-based fallback',
+      policy_version: '1.1.0',
+    })
+    renderApp()
+    const toggle = await screen.findByRole('button', { name: 'Open navigation menu' })
+    expect(document.querySelector('.sidebar-mobile')).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(document.querySelector('.sidebar-mobile')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Close navigation menu' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close navigation menu' }))
+    await waitFor(() => expect(document.querySelector('.sidebar-mobile')).toBeNull())
   })
 })

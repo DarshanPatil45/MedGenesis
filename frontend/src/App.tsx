@@ -1,8 +1,14 @@
+import { useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useState } from 'react'
-import { NavLink, Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import { api } from './api/client'
 import type { Health } from './api/types'
-import { PatientProvider, usePatients } from './PatientContext'
+import { Header } from './components/layout/Header'
+import { MobileNav } from './components/layout/MobileNav'
+import { NAV } from './components/layout/nav'
+import { PatientContextBar } from './components/layout/PatientContextBar'
+import { Sidebar } from './components/layout/Sidebar'
+import { PatientProvider } from './PatientContext'
 import { CarePlanPage } from './pages/CarePlanPage'
 import { ChatPage } from './pages/ChatPage'
 import { ClinicalAnalysisPage } from './pages/ClinicalAnalysisPage'
@@ -11,17 +17,6 @@ import { ScreeningPage } from './pages/ScreeningPage'
 import { SimulatorPage } from './pages/SimulatorPage'
 import { TimelinePage } from './pages/TimelinePage'
 import { TracePage } from './pages/TracePage'
-
-const NAV = [
-  { to: '/', label: 'Patient Intake', end: true },
-  { to: '/timeline', label: 'Digital Twin Timeline' },
-  { to: '/screening', label: 'Screening Dashboard' },
-  { to: '/simulator', label: 'What-if Simulator' },
-  { to: '/careplan', label: 'Care Plan' },
-  { to: '/chat', label: 'Chat' },
-  { to: '/clinical-analysis', label: 'Clinical Analysis' },
-  { to: '/trace', label: 'Agent Trace & Safety' },
-]
 
 const THEME_KEY = 'medgenesis.theme'
 type Theme = 'light' | 'dark'
@@ -61,31 +56,12 @@ function useTheme() {
   return { theme, toggle }
 }
 
-function PatientSwitcher() {
-  const { patients, selected, selectPatient } = usePatients()
-  if (!patients.length) return <div className="muted">No patients yet — create one on Intake.</div>
-  return (
-    <label>
-      Active patient
-      <select
-        value={selected?.id ?? ''}
-        onChange={(e) => selectPatient(Number(e.target.value))}
-      >
-        {patients.map((p) => (
-          <option key={p.id} value={p.id}>
-            #{p.id} {p.pseudonym}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
-}
-
 function Shell() {
   const [health, setHealth] = useState<Health | null>(null)
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const { theme, toggle: toggleTheme } = useTheme()
+  const reduceMotion = useReducedMotion()
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null))
@@ -97,70 +73,41 @@ function Shell() {
     setNavOpen(false)
   }, [location.pathname])
 
+  const currentPage = NAV.find((item) => item.to === location.pathname)?.label ?? ''
+
   return (
-    <div className="app">
+    <div className="app-shell">
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <aside className={`sidebar${navOpen ? ' nav-open' : ''}`}>
-        <div className="brand">
-          <span className="brand-text">
-            MedGenesis
-            <small>Agentic AI for Type 2 Diabetes education. Not a diagnostic device.</small>
-          </span>
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          >
-            {theme === 'dark' ? '☀' : '☾'}
-          </button>
-        </div>
-        <button
-          type="button"
-          className="secondary nav-toggle"
-          aria-expanded={navOpen}
-          aria-controls="primary-nav"
-          onClick={() => setNavOpen((v) => !v)}
-        >
-          Menu {navOpen ? '▾' : '▸'}
-        </button>
-        <PatientSwitcher />
-        <nav className="nav" id="primary-nav" aria-label="Primary">
-          {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end}>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="muted status-panel" style={{ marginTop: 'auto', fontSize: '0.72rem' }}>
-          {health ? (
-            <>
-              <div>db: {health.database}</div>
-              <div>model: {health.screening_model}</div>
-              <div>rag: {health.rag_backend}</div>
-              <div>llm: {health.llm}</div>
-              <div>policy: v{health.policy_version}</div>
-            </>
-          ) : (
-            <div>backend unreachable</div>
-          )}
-        </div>
-      </aside>
-      <main className="main" id="main-content" tabIndex={-1}>
-        <Routes>
-          <Route path="/" element={<IntakePage />} />
-          <Route path="/timeline" element={<TimelinePage />} />
-          <Route path="/screening" element={<ScreeningPage />} />
-          <Route path="/simulator" element={<SimulatorPage />} />
-          <Route path="/careplan" element={<CarePlanPage />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/clinical-analysis" element={<ClinicalAnalysisPage />} />
-          <Route path="/trace" element={<TracePage />} />
-        </Routes>
-      </main>
+
+      <Header
+        health={health}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        navOpen={navOpen}
+        onToggleNav={() => setNavOpen((v) => !v)}
+        currentPage={currentPage}
+      />
+
+      <div className="app-body">
+        <MobileNav open={navOpen} reduceMotion={!!reduceMotion} />
+        <Sidebar health={health} />
+
+        <main className="main" id="main-content" tabIndex={-1}>
+          <PatientContextBar />
+          <Routes>
+            <Route path="/" element={<IntakePage />} />
+            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/screening" element={<ScreeningPage />} />
+            <Route path="/simulator" element={<SimulatorPage />} />
+            <Route path="/careplan" element={<CarePlanPage />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/clinical-analysis" element={<ClinicalAnalysisPage />} />
+            <Route path="/trace" element={<TracePage />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   )
 }

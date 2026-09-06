@@ -1,8 +1,17 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import type { ClinicalAnalysis, DigitalTwin, LabTrend, ModelComparison, Patient } from '../api/types'
 import { ClinicalAnalysisPage } from './ClinicalAnalysisPage'
+
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <ClinicalAnalysisPage />
+    </MemoryRouter>,
+  )
+}
 
 vi.mock('../api/client', () => ({
   api: {
@@ -129,7 +138,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('loads the Digital Twin view for the selected patient on mount', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     await waitFor(() => expect(api.digitalTwin).toHaveBeenCalledWith(4))
     expect(api.labTrend).toHaveBeenCalledWith(4, 'HbA1c')
     expect(await screen.findByText(/Metformin/)).toBeDefined()
@@ -137,7 +146,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('shows the HbA1c trend and history from the backend, never a computed threshold', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     expect(await screen.findByText(/Trend across available measurements:/)).toBeDefined()
     expect(screen.getByText('increasing')).toBeDefined()
     expect(screen.getByText(/Trend classification is not a diagnostic threshold/)).toBeDefined()
@@ -145,7 +154,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('disables Analyze until a question is entered', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const button = await screen.findByRole('button', { name: /^Analyze Patient$/ })
     expect(button.hasAttribute('disabled')).toBe(true)
 
@@ -155,7 +164,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('runs the full flow: question -> analyze -> loading -> result -> evidence display', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: "What is relevant to this patient's diabetes risk?" } })
 
@@ -176,10 +185,10 @@ describe('ClinicalAnalysisPage', () => {
     expect(screen.getByText(/production RandomForest screening model assigned a score/)).toBeDefined()
 
     // Evidence display — numbered citation, collapsed by default
-    expect(screen.getByText(/\[E1\] Diabetes Basics/)).toBeDefined()
+    expect(screen.getByRole('button', { name: /E1.*Diabetes Basics/ })).toBeDefined()
     expect(screen.queryByText(/Document ID/)).toBeNull()
 
-    fireEvent.click(screen.getByText(/\[E1\] Diabetes Basics/))
+    fireEvent.click(screen.getByRole('button', { name: /E1.*Diabetes Basics/ }))
     expect(await screen.findByText(/Document ID/)).toBeDefined()
     expect(screen.getByText('cdc_diabetes_basics#risk-factors-for-type-2-diabetes')).toBeDefined()
   })
@@ -189,7 +198,7 @@ describe('ClinicalAnalysisPage', () => {
       ...ANALYSIS,
       evidence_findings: [ANALYSIS.evidence_findings[0], PUBMED_SOURCE],
     })
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk and recent literature' } })
     fireEvent.click(screen.getByLabelText(/PubMed literature/))
@@ -199,12 +208,12 @@ describe('ClinicalAnalysisPage', () => {
     expect(api.analyzeClinical).toHaveBeenCalledWith(4, expect.any(String), expect.objectContaining({ includePubmed: true }))
     expect(screen.getByText('Local evidence')).toBeDefined()
     expect(screen.getByText('PubMed evidence')).toBeDefined()
-    expect(screen.getByText(/\[E1\] Diabetes Basics/)).toBeDefined()
-    expect(screen.getByText(/\[E2\] A PubMed study on diabetes risk/)).toBeDefined()
+    expect(screen.getByRole('button', { name: /E1.*Diabetes Basics/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /E2.*A PubMed study on diabetes risk/ })).toBeDefined()
   })
 
   it('shows an honest empty state when PubMed was requested but nothing came back', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
     fireEvent.click(screen.getByLabelText(/PubMed literature/))
@@ -216,7 +225,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('never labels the candidate model as production', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
     fireEvent.click(screen.getByRole('button', { name: /^Analyze Patient$/ }))
@@ -225,6 +234,49 @@ describe('ClinicalAnalysisPage', () => {
     expect(screen.getByText('Production model — RandomForest')).toBeDefined()
     expect(screen.getByText('Candidate model — XGBoost')).toBeDefined()
     expect(screen.getByText('Not requested for this analysis.')).toBeDefined()
+  })
+
+  it('renders RandomForest contributions as a ranked list and XGBoost contributions as signed bars', async () => {
+    vi.mocked(api.analyzeClinical).mockResolvedValueOnce({
+      ...ANALYSIS,
+      model_analysis: [
+        ...ANALYSIS.model_analysis,
+        {
+          claim:
+            'Top model feature contributions for the production RandomForest model (aggregate, trained-model-level, not specific to this patient): GenHlth, HighBP, BMI, HighChol, Age.',
+          claim_type: 'model_observation',
+          evidence_ids: [],
+        },
+        {
+          claim:
+            "For this patient, the top MODEL FEATURE CONTRIBUTIONS to the XGBoost candidate model's score (SHAP values, signed by direction of effect on the score): GenHlth (-1.289), Age (-1.190), BMI (+0.631), HighBP (+0.453), HighChol (-0.377). These describe what the model weighted, not a cause of the patient's risk.",
+          claim_type: 'model_observation',
+          evidence_ids: [],
+        },
+      ],
+    })
+    renderPage()
+    const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
+    fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Analyze Patient$/ }))
+    await waitFor(() => expect(screen.getByText(/Safety review: approved/i)).toBeDefined())
+
+    expect(
+      screen.getByText(/Feature contributions describe how model inputs influenced the prediction/),
+    ).toBeDefined()
+
+    // RandomForest: a plain ranked list, no fabricated magnitude.
+    const rankedList = document.querySelector('.ranked-list')
+    expect(rankedList).not.toBeNull()
+    expect(rankedList?.textContent).toBe('GenHlthHighBPBMIHighCholAge')
+
+    // XGBoost: real signed values rendered as bars, never recomputed.
+    expect(screen.getByText('+0.631')).toBeDefined()
+    expect(screen.getByText('-1.289')).toBeDefined()
+    const bars = document.querySelectorAll('.shap-fill')
+    expect(bars).toHaveLength(5)
+    expect(document.querySelectorAll('.shap-fill.neg')).toHaveLength(3)
+    expect(document.querySelectorAll('.shap-fill.pos')).toHaveLength(2)
   })
 
   it('shows the candidate model score and a real, backend-supplied metrics table when comparison is requested', async () => {
@@ -273,7 +325,7 @@ describe('ClinicalAnalysisPage', () => {
         },
       ],
     })
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'compare the models' } })
     fireEvent.click(screen.getByLabelText(/Compare models/))
@@ -287,7 +339,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('renders the uncertainty section from backend-supplied notes only', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
     fireEvent.click(screen.getByRole('button', { name: /^Analyze Patient$/ }))
@@ -299,7 +351,7 @@ describe('ClinicalAnalysisPage', () => {
 
   it('shows a network error via ErrorNote rather than a fake result', async () => {
     vi.mocked(api.analyzeClinical).mockRejectedValueOnce(new Error('Cannot reach the MedGenesis API'))
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
     fireEvent.click(screen.getByRole('button', { name: /^Analyze Patient$/ }))
@@ -309,7 +361,7 @@ describe('ClinicalAnalysisPage', () => {
   })
 
   it('does not send a second overlapping request on a rapid double-click', async () => {
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
     const button = screen.getByRole('button', { name: /^Analyze Patient$/ })
@@ -338,7 +390,7 @@ describe('ClinicalAnalysisPage', () => {
         trace: [],
       },
     })
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'what if bmi decreased' } })
     fireEvent.click(screen.getByLabelText(/What-if simulation/))
@@ -369,7 +421,7 @@ describe('ClinicalAnalysisPage', () => {
         trace: [],
       },
     })
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'what if activity increased' } })
     fireEvent.click(screen.getByLabelText(/What-if simulation/))
@@ -390,7 +442,7 @@ describe('ClinicalAnalysisPage', () => {
       integrated_analysis: [{ claim: 'This response was withheld by the MedGenesis safety layer.', claim_type: 'uncertainty', evidence_ids: [] }],
       safety: { status: 'BLOCKED', reasons: ['[medication_advice] ...'], disclaimer: null, banner: null, policy_version: '1.1.0' },
     })
-    render(<ClinicalAnalysisPage />)
+    renderPage()
     const textarea = await screen.findByPlaceholderText(/What factors are relevant/)
     fireEvent.change(textarea, { target: { value: 'diabetes risk' } })
     fireEvent.click(screen.getByRole('button', { name: /^Analyze Patient$/ }))

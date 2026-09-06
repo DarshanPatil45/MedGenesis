@@ -1,26 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+  ArrowRight,
+  BookOpen,
+  Fingerprint,
+  FlaskConical,
+  GitCompare,
+  Library,
+  Sparkles,
+} from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type {
   ClinicalAnalysis,
   ClinicalClaim,
-  DigitalTwin,
+  DigitalTwin as DigitalTwinData,
   EvidenceSource,
   LabTrend,
   ModelComparison,
 } from '../api/types'
 import { usePatients } from '../PatientContext'
-import { AgentTrace, Card, ErrorNote, RiskBadge } from '../components/common'
-import { EvidenceCitations } from '../components/EvidenceCitation'
-import { SafetyBanner, ScopeDisclaimer } from '../components/SafetyBanner'
+import { AgentTrace, ErrorNote, RiskBadge } from '../components/common'
+import { DigitalTwin } from '../components/clinical/DigitalTwin'
+import { EvidencePanel } from '../components/clinical/EvidencePanel'
+import { ModelResults } from '../components/clinical/ModelResults'
+import { RankedFeatureList, ShapBars } from '../components/clinical/SHAPChart'
+import { SafetyStatus } from '../components/clinical/SafetyStatus'
+import { ScopeDisclaimer } from '../components/SafetyBanner'
 
 const QUESTION_MAX_LENGTH = 2000
 
@@ -37,31 +42,29 @@ const ANALYSIS_OPTIONS = [
     key: 'includeEvidence' as const,
     label: 'Medical evidence',
     description: 'Retrieve relevant local medical evidence.',
+    icon: BookOpen,
   },
   {
     key: 'includePubmed' as const,
     label: 'PubMed literature',
     description: 'Include PubMed literature when available.',
+    icon: Library,
   },
   {
     key: 'includeModelComparison' as const,
     label: 'Compare models',
     description: 'Show the candidate XGBoost model alongside the production model.',
+    icon: GitCompare,
   },
   {
     key: 'includeSimulation' as const,
     label: 'What-if simulation',
     description: 'Run an available model-based scenario.',
+    icon: FlaskConical,
   },
 ]
 
-// Cosmetic only — the backend's raw snake_case field name, reformatted for
-// display. Never reinterprets or relabels what the value means (e.g. never
-// turns a 0/1 into "Yes"/"No"), since that would be a frontend judgment
-// about clinical meaning, not a formatting change.
-function humanizeFieldName(key: string): string {
-  return key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
-}
+const FLOW_STEPS = ['Patient', 'Digital Twin', 'Models', 'Evidence', 'AI Synthesis', 'Safety']
 
 function EvidenceRefs({ ids }: { ids: string[] }) {
   if (!ids.length) return null
@@ -94,44 +97,15 @@ function ClaimList({ claims }: { claims: ClinicalClaim[] }) {
   )
 }
 
-const COMPARISON_METRICS: [string, string][] = [
-  ['accuracy', 'Accuracy'],
-  ['precision', 'Precision'],
-  ['recall', 'Recall'],
-  ['f1', 'F1'],
-  ['roc_auc', 'ROC-AUC'],
-]
-
-function ModelComparisonTable({ comparison }: { comparison: ModelComparison }) {
+function FlowStrip({ reached }: { reached: number }) {
   return (
-    <div className="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Metric</th>
-            <th>RandomForest (production)</th>
-            <th>XGBoost (candidate)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {COMPARISON_METRICS.map(([key, label]) => {
-            const row = comparison.metrics_table[key]
-            if (!row) return null
-            return (
-              <tr key={key}>
-                <td>{label}</td>
-                <td>{row.random_forest?.toFixed(4) ?? '—'}</td>
-                <td>{row.xgboost?.toFixed(4) ?? '—'}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      <p className="muted" style={{ fontSize: '0.76rem', marginTop: '0.5rem', marginBottom: 0 }}>
-        From a fixed historical test set of {comparison.n_test.toLocaleString()} records — not a
-        statement about this specific patient. Values are supplied by the backend, never
-        recomputed in the browser.
-      </p>
+    <div className="flow-strip" aria-hidden="true">
+      {FLOW_STEPS.map((step, i) => (
+        <span key={step} style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          {i > 0 && <ArrowRight size={12} className="flow-strip-arrow" />}
+          <span className={`flow-strip-step${i < reached ? ' current' : ''}`}>{step}</span>
+        </span>
+      ))}
     </div>
   )
 }
@@ -150,11 +124,12 @@ export function ClinicalAnalysisPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestInFlight = useRef(false)
+  const reduceMotion = useReducedMotion()
 
   // Digital Twin view — reuses the existing Phase 2 endpoints directly
   // rather than re-deriving this from the analysis result, which only
   // carries a filtered, question-relevant subset as prose.
-  const [twin, setTwin] = useState<DigitalTwin | null>(null)
+  const [twin, setTwin] = useState<DigitalTwinData | null>(null)
   const [hba1c, setHba1c] = useState<LabTrend | null>(null)
 
   const loadTwinView = useCallback(async (patientId: number) => {
@@ -224,16 +199,31 @@ export function ClinicalAnalysisPage() {
 
   const blocked = result?.safety.status === 'BLOCKED'
 
-  const rfClaim = result?.model_analysis.find((c) => c.claim.includes('production RandomForest') && c.claim.includes('assigned a score'))
-  const xgbClaim = result?.model_analysis.find((c) => c.claim.includes('XGBoost candidate model') && c.claim.includes('assigned a score'))
-  const contributionClaims = result?.model_analysis.filter((c) => c.claim.includes('MODEL FEATURE CONTRIBUTIONS') || c.claim.includes('Top model feature contributions')) ?? []
-  const conflictClaim = result?.model_analysis.find((c) => c.claim_type === 'uncertainty' && c.claim.includes('different risk tiers'))
-  const comparisonClaim = result?.model_analysis.find((c) => c.claim.includes('Model evaluation metrics'))
-
-  const hba1cChartData = (hba1c?.history ?? []).map((h) => ({
-    date: new Date(h.recorded_at).toLocaleDateString(),
-    value: h.value,
-  }))
+  const contributionClaims =
+    result?.model_analysis.filter(
+      (c) => c.claim.includes('MODEL FEATURE CONTRIBUTIONS') || c.claim.includes('Top model feature contributions'),
+    ) ?? []
+  const rfContributionClaim = contributionClaims.find((c) => c.claim.includes('RandomForest'))
+  const xgbContributionClaim = contributionClaims.find((c) => c.claim.includes('XGBoost'))
+  const otherContributionClaims = contributionClaims.filter(
+    (c) => c !== rfContributionClaim && c !== xgbContributionClaim,
+  )
+  // The two headline score claims — already shown explicitly under
+  // "Model Intelligence" (production vs candidate), so "Model signals"
+  // below must exclude them to avoid showing the same sentence twice.
+  const rfScoreClaim = result?.model_analysis.find(
+    (c) => c.claim.includes('production RandomForest') && c.claim.includes('assigned a score'),
+  )
+  const xgbScoreClaim = result?.model_analysis.find(
+    (c) => c.claim.includes('XGBoost candidate model') && c.claim.includes('assigned a score'),
+  )
+  // "Model signals" — every remaining model_analysis claim that isn't a
+  // feature contribution or a headline score (those get their own
+  // sections below).
+  const modelSignalClaims =
+    result?.model_analysis.filter(
+      (c) => !contributionClaims.includes(c) && c !== rfScoreClaim && c !== xgbScoreClaim,
+    ) ?? []
 
   // Evidence findings, indexed by their true [E#] position (the order the
   // backend actually retrieved and cited them in), then split for display
@@ -247,27 +237,34 @@ export function ClinicalAnalysisPage() {
 
   return (
     <>
-      <h1>Clinical Analysis</h1>
-      <p className="muted">
-        Evidence-grounded analysis of the selected patient profile — composes the Digital Twin,
-        the production and candidate risk models, retrieved evidence, and (optionally) a what-if
-        simulation into one structured, cited analysis, reviewed by the Safety Agent before being
-        shown here.
-      </p>
+      <motion.div
+        className="section-block"
+        initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: reduceMotion ? 0 : 0.65, ease: [0.2, 0, 0, 1] }}
+      >
+        <span className="eyebrow">
+          <Sparkles /> Clinical intelligence
+        </span>
+        <h1 className="section-title">Clinical Analysis</h1>
+        <p className="section-lead">
+          Grounded in this patient's longitudinal Digital Twin data, the production and candidate
+          risk models, and retrieved medical evidence — composed into one structured, cited
+          analysis and reviewed by the Safety Agent before being shown here.
+        </p>
+        <FlowStrip reached={result ? 6 : twin ? 2 : 1} />
+      </motion.div>
+
       <ScopeDisclaimer />
       <ErrorNote error={error} />
 
-      <Card title="Ask a clinical question">
-        <p className="muted" style={{ marginTop: 0 }}>
-          Patient #{selected.id} — {selected.pseudonym}
-        </p>
-        <label htmlFor="clinical-question" style={{ display: 'block', marginBottom: '0.3rem' }}>
-          Clinical question
+      <div className="command-bar">
+        <label htmlFor="clinical-question" style={{ display: 'block', marginBottom: '0.4rem' }}>
+          Ask a question about the patient's longitudinal state
         </label>
         <textarea
           id="clinical-question"
           rows={2}
-          style={{ width: '100%' }}
           value={question}
           maxLength={QUESTION_MAX_LENGTH}
           placeholder="e.g. What factors are relevant to this patient's diabetes risk, especially blood pressure and BMI?"
@@ -279,7 +276,7 @@ export function ClinicalAnalysisPage() {
             }
           }}
         />
-        <div className="row" style={{ justifyContent: 'space-between', marginTop: '0.15rem' }}>
+        <div className="row" style={{ justifyContent: 'space-between' }}>
           <span className="muted" style={{ fontSize: '0.72rem' }}>
             Ctrl/Cmd+Enter to analyze
           </span>
@@ -288,26 +285,27 @@ export function ClinicalAnalysisPage() {
           </span>
         </div>
 
-        <div className="grid-2" style={{ marginTop: '0.7rem' }}>
-          {ANALYSIS_OPTIONS.map((opt) => (
-            <label key={opt.key} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.5rem' }}>
-              <input
-                type="checkbox"
-                checked={optionValues[opt.key]}
-                onChange={(e) => optionSetters[opt.key](e.target.checked)}
-                style={{ marginTop: '0.2rem' }}
-              />
-              <span>
-                <span style={{ display: 'block', color: 'var(--text)', fontWeight: 500 }}>{opt.label}</span>
-                <span style={{ display: 'block', fontSize: '0.78rem' }}>{opt.description}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-
-        <div style={{ marginTop: '0.9rem' }}>
-          <button onClick={() => void analyze()} disabled={busy || !question.trim()}>
+        <div className="command-bar-footer">
+          <div className="chip-row">
+            {ANALYSIS_OPTIONS.map((opt) => (
+              <label
+                key={opt.key}
+                className={`chip${optionValues[opt.key] ? ' selected' : ''}`}
+                title={opt.description}
+              >
+                <opt.icon size={14} aria-hidden="true" />
+                {opt.label}
+                <input
+                  type="checkbox"
+                  checked={optionValues[opt.key]}
+                  onChange={(e) => optionSetters[opt.key](e.target.checked)}
+                />
+              </label>
+            ))}
+          </div>
+          <button className="command-bar-submit" onClick={() => void analyze()} disabled={busy || !question.trim()}>
             {busy ? 'Analyzing…' : 'Analyze Patient'}
+            <ArrowRight size={15} aria-hidden="true" />
           </button>
         </div>
 
@@ -324,237 +322,201 @@ export function ClinicalAnalysisPage() {
             </ul>
           </div>
         )}
-      </Card>
+      </div>
 
-      <Card title="Digital Twin">
-        {!twin ? (
-          <p className="muted">Digital Twin view unavailable for this patient right now.</p>
-        ) : (
-          <>
-            <h3 style={{ marginTop: 0 }}>Health & lifestyle</h3>
-            <dl className="kv" style={{ fontSize: '0.86rem' }}>
-              {Object.entries({ ...twin.clinical, ...twin.lifestyle }).map(([k, v]) => (
-                <div key={k} style={{ display: 'contents' }}>
-                  <dt>{humanizeFieldName(k)}</dt>
-                  <dd>{String(v)}</dd>
-                </div>
-              ))}
-            </dl>
-            <h3 style={{ marginTop: '1rem' }}>Current medications</h3>
-            {twin.medications.current.length === 0 ? (
-              <p className="muted">No current medications on record.</p>
-            ) : (
-              <ul style={{ fontSize: '0.86rem' }}>
-                {twin.medications.current.map((m, i) => (
-                  <li key={i}>
-                    {m.medication_name}
-                    {m.dose ? ` — ${m.dose}` : ''}{' '}
-                    <span className="muted">(recorded {new Date(m.recorded_at).toLocaleDateString()})</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="muted" style={{ fontSize: '0.78rem' }}>
-              Recorded patient history — not a treatment recommendation.
-            </p>
-          </>
-        )}
-
-        {hba1c && (
-          <>
-            <h3>HbA1c</h3>
-            {hba1c.trend === 'no_data' ? (
-              <p className="muted">No HbA1c measurements are on record for this patient.</p>
-            ) : (
-              <>
-                {hba1c.trend === 'insufficient_data' && (
-                  <p className="muted">
-                    Only {hba1c.history.length} measurement{hba1c.history.length === 1 ? '' : 's'} on
-                    record — not enough to describe a trend.
-                  </p>
-                )}
-                {hba1cChartData.length > 1 && (
-                  <div className="table-scroll" style={{ width: '100%', height: 200 }}>
-                    <ResponsiveContainer minWidth={280}>
-                      <LineChart data={hba1cChartData} margin={{ top: 8, right: 16, bottom: 4, left: -12 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e6ebf2" />
-                        <XAxis dataKey="date" fontSize={12} />
-                        <YAxis fontSize={12} domain={['auto', 'auto']} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="value" name="HbA1c (%)" stroke="#1d6fa5" strokeWidth={2} dot={{ r: 3 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hba1c.history.map((h, i) => (
-                        <tr key={i}>
-                          <td>{new Date(h.recorded_at).toLocaleDateString()}</td>
-                          <td>
-                            {h.value}
-                            {h.unit ?? '%'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="muted" style={{ fontSize: '0.78rem' }}>
-                  Trend across available measurements: <strong>{hba1c.trend}</strong>. Trend
-                  classification is not a diagnostic threshold.
-                </p>
-              </>
-            )}
-          </>
-        )}
-      </Card>
+      <div className="section-block" style={{ marginTop: 'var(--space-7)' }}>
+        <span className="micro-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Fingerprint size={13} /> Digital Twin
+        </span>
+        <DigitalTwin twin={twin} hba1c={hba1c} />
+      </div>
 
       {result && (
         <>
-          <SafetyBanner safety={result.safety} />
-
-          {blocked && (
-            <Card title="Analysis withheld">
+          {blocked ? (
+            <div className="section-block">
+              <h2 className="section-title" style={{ fontSize: '1.2rem' }}>
+                Analysis withheld
+              </h2>
               <p className="muted">
-                The Safety Agent blocked this analysis. Nothing below reflects the withheld content —
-                only what the safety layer approved for display.
+                The Safety Agent blocked this analysis. Nothing below reflects the withheld content
+                — only what the safety layer approved for display.
               </p>
-            </Card>
-          )}
-
-          <Card title="Patient observations">
-            <ClaimList claims={result.patient_summary} />
-          </Card>
-
-          <Card title="Model analysis">
-            <div className="grid-2">
-              <div>
-                <h3>Production model — RandomForest</h3>
-                {rfClaim ? <p>{rfClaim.claim}</p> : <p className="muted">Not available for this profile.</p>}
-                {result.production_risk_tier && <RiskBadge tier={result.production_risk_tier} />}
-              </div>
-              <div>
-                <h3>Candidate model — XGBoost</h3>
-                {includeModelComparison ? (
-                  xgbClaim ? <p>{xgbClaim.claim}</p> : <p className="muted">Not available for this profile.</p>
-                ) : (
-                  <p className="muted">Not requested for this analysis.</p>
-                )}
-              </div>
             </div>
-            {conflictClaim && (
-              <div className="banner flagged" style={{ marginTop: '0.6rem' }}>
-                {conflictClaim.claim}
-              </div>
-            )}
-            {comparison ? (
-              <>
-                <h3 style={{ marginTop: '0.8rem' }}>Model evaluation metrics</h3>
-                <ModelComparisonTable comparison={comparison} />
-              </>
-            ) : (
-              includeModelComparison &&
-              comparisonClaim && (
-                <p className="muted" style={{ marginTop: '0.8rem', fontSize: '0.82rem' }}>
-                  {comparisonClaim.claim}
-                </p>
-              )
-            )}
-          </Card>
+          ) : (
+            <div className="workspace">
+              <div className="workspace-main">
+                <section className="section-block">
+                  <h2 className="section-title" style={{ fontSize: '1.25rem' }}>
+                    AI Synthesis
+                  </h2>
 
-          {contributionClaims.length > 0 && (
-            <Card title="Model Feature Contributions">
-              <p className="muted" style={{ marginTop: 0, fontSize: '0.82rem' }}>
-                These values describe how the model uses features; they do not establish
-                causation.
-              </p>
-              <ClaimList claims={contributionClaims} />
-            </Card>
-          )}
+                  <div style={{ marginBottom: 'var(--space-5)' }}>
+                    <span className="micro-label">Patient observations</span>
+                    <ClaimList claims={result.patient_summary} />
+                  </div>
 
-          <Card title="Evidence">
-            {!includeEvidence && !includePubmed ? (
-              <p className="muted">Evidence retrieval was not requested for this analysis.</p>
-            ) : indexedEvidence.length === 0 ? (
-              <p className="muted">No sufficiently relevant evidence was retrieved for this query.</p>
-            ) : (
-              <>
-                {localEvidence.length > 0 && (
-                  <>
-                    <h3 style={{ marginTop: 0 }}>Local evidence</h3>
-                    <EvidenceCitations items={localEvidence} />
-                  </>
-                )}
-                {includePubmed && (
-                  <>
-                    <h3>PubMed evidence</h3>
-                    {pubmedEvidence.length > 0 ? (
-                      <EvidenceCitations items={pubmedEvidence} />
-                    ) : (
-                      <p className="muted" style={{ fontSize: '0.82rem' }}>
-                        Either no relevant PubMed result was available, or PubMed was unavailable for
-                        this request. Local evidence above is unaffected.
+                  <div style={{ marginBottom: 'var(--space-5)' }}>
+                    <span className="micro-label">Model signals</span>
+                    <ClaimList claims={modelSignalClaims} />
+                  </div>
+
+                  <div style={{ marginBottom: 'var(--space-5)' }}>
+                    <span className="micro-label">Integrated synthesis</span>
+                    <ClaimList claims={result.integrated_analysis} />
+                    {result.safety_flags.length > 0 && (
+                      <p className="muted" style={{ fontSize: '0.78rem' }}>
+                        Generation flags: {result.safety_flags.join(' ')}
                       </p>
                     )}
-                  </>
-                )}
-              </>
-            )}
-          </Card>
+                  </div>
 
-          <Card title="Integrated analysis">
-            <ClaimList claims={result.integrated_analysis} />
-            {result.safety_flags.length > 0 && (
-              <p className="muted" style={{ fontSize: '0.78rem' }}>
-                Generation flags: {result.safety_flags.join(' ')}
-              </p>
-            )}
-          </Card>
+                  <div>
+                    <span className="micro-label">Uncertainty & limitations</span>
+                    {result.uncertainties.length === 0 ? (
+                      <p className="muted">No uncertainty notes were returned for this analysis.</p>
+                    ) : (
+                      <ul style={{ fontSize: '0.86rem' }}>
+                        {result.uncertainties.map((u, i) => (
+                          <li key={i}>{u}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </section>
 
-          {includeSimulation && (
-            <Card title="Model Simulation">
-              {!result.simulation ? (
-                <p className="muted">Simulation unavailable for this profile/request.</p>
-              ) : result.simulation.status === 'unavailable_for_profile' ? (
-                <p className="muted">Simulation unavailable for this profile/request. {result.simulation.unavailable_reason}</p>
-              ) : (
-                <>
-                  <p className="muted" style={{ marginTop: 0 }}>
-                    {result.simulation.label}. Not a predicted clinical outcome, not a guaranteed
-                    result.
+                <section className="section-block">
+                  <h2 className="section-title" style={{ fontSize: '1.25rem' }}>
+                    Model Intelligence
+                  </h2>
+                  <p className="section-lead" style={{ marginBottom: 'var(--space-4)' }}>
+                    Production vs candidate.
                   </p>
-                  <p>{result.simulation.summary_text}</p>
-                </>
-              )}
-            </Card>
+                  <ModelResults result={result} comparison={comparison} includeModelComparison={includeModelComparison} />
+                </section>
+
+                {contributionClaims.length > 0 && (
+                  <section className="section-block">
+                    <h2 className="section-title" style={{ fontSize: '1.25rem' }}>
+                      Why this prediction?
+                    </h2>
+                    <p className="section-lead" style={{ marginBottom: 'var(--space-4)' }}>
+                      Feature contributions describe how model inputs influenced the prediction.
+                      They do not establish causality.
+                    </p>
+                    {rfContributionClaim && (
+                      <div style={{ marginBottom: xgbContributionClaim ? '1.2rem' : 0 }}>
+                        <h3>RandomForest — aggregate importance</h3>
+                        <RankedFeatureList text={rfContributionClaim.claim} />
+                        <EvidenceRefs ids={rfContributionClaim.evidence_ids} />
+                      </div>
+                    )}
+                    {xgbContributionClaim && (
+                      <div>
+                        <h3>XGBoost — this patient (SHAP)</h3>
+                        <ShapBars text={xgbContributionClaim.claim} />
+                        <EvidenceRefs ids={xgbContributionClaim.evidence_ids} />
+                      </div>
+                    )}
+                    {otherContributionClaims.length > 0 && <ClaimList claims={otherContributionClaims} />}
+                  </section>
+                )}
+
+                <section className="section-block">
+                  <h2 className="section-title" style={{ fontSize: '1.25rem' }}>
+                    Evidence
+                  </h2>
+                  <EvidencePanel
+                    includeEvidence={includeEvidence}
+                    includePubmed={includePubmed}
+                    localEvidence={localEvidence}
+                    pubmedEvidence={pubmedEvidence}
+                    total={indexedEvidence.length}
+                  />
+                </section>
+
+                {includeSimulation && (
+                  <section className="section-block">
+                    <h2 className="section-title" style={{ fontSize: '1.25rem' }}>
+                      Model Simulation
+                    </h2>
+                    {!result.simulation ? (
+                      <p className="muted">Simulation unavailable for this profile/request.</p>
+                    ) : result.simulation.status === 'unavailable_for_profile' ? (
+                      <p className="muted">
+                        Simulation unavailable for this profile/request. {result.simulation.unavailable_reason}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="muted" style={{ marginTop: 0 }}>
+                          {result.simulation.label}. Not a predicted clinical outcome, not a
+                          guaranteed result.
+                        </p>
+                        <p>{result.simulation.summary_text}</p>
+                      </>
+                    )}
+                  </section>
+                )}
+
+                <details className="card">
+                  <summary className="row" style={{ gap: '0.5rem' }}>
+                    Analysis details (trace)
+                  </summary>
+                  <div className="details-body">
+                    <AgentTrace trace={result.trace} />
+                  </div>
+                </details>
+              </div>
+
+              <aside className="workspace-side">
+                <div className="signal-panel">
+                  <span className="signal-panel-label">Patient signals</span>
+                  <div className="signal-row">
+                    <span className="muted">Risk tier</span>
+                    <RiskBadge tier={result.production_risk_tier} />
+                  </div>
+                  <div className="signal-row">
+                    <span className="muted">Model</span>
+                    <span>Production · RandomForest</span>
+                  </div>
+                  {twin && (
+                    <div className="signal-row">
+                      <span className="muted">BMI</span>
+                      <span>{String((twin.clinical as Record<string, unknown>).bmi ?? '—')}</span>
+                    </div>
+                  )}
+                  {hba1c?.latest && (
+                    <div className="signal-row">
+                      <span className="muted">HbA1c</span>
+                      <span>
+                        {hba1c.latest.value}
+                        {hba1c.latest.unit ?? '%'}
+                      </span>
+                    </div>
+                  )}
+                  <div className="signal-row">
+                    <span className="muted">Safety</span>
+                    <span
+                      style={{
+                        color:
+                          result.safety.status === 'APPROVED'
+                            ? 'var(--low)'
+                            : result.safety.status === 'BLOCKED'
+                              ? 'var(--high)'
+                              : 'var(--moderate)',
+                        fontWeight: 600,
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      {result.safety.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                </div>
+              </aside>
+            </div>
           )}
 
-          <Card title="Uncertainty & limitations">
-            {result.uncertainties.length === 0 ? (
-              <p className="muted">No uncertainty notes were returned for this analysis.</p>
-            ) : (
-              <ul style={{ fontSize: '0.86rem' }}>
-                {result.uncertainties.map((u, i) => (
-                  <li key={i}>{u}</li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          <details className="card">
-            <summary>Analysis details (trace)</summary>
-            <div className="details-body">
-              <AgentTrace trace={result.trace} />
-            </div>
-          </details>
+          <SafetyStatus safety={result.safety} />
         </>
       )}
     </>

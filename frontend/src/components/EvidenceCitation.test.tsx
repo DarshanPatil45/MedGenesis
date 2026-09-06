@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { EvidenceSource } from '../api/types'
 import { EvidenceCitations } from './EvidenceCitation'
@@ -48,19 +48,19 @@ describe('EvidenceCitations', () => {
         ]}
       />,
     )
-    expect(screen.getByText(/\[E1\] Diabetes Basics/)).toBeDefined()
-    expect(screen.getByText(/\[E2\] Physical activity and diabetes risk/)).toBeDefined()
+    expect(screen.getByRole('button', { name: /E1.*Diabetes Basics/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /E2.*Physical activity and diabetes risk/ })).toBeDefined()
     expect(screen.queryByText(/Document ID/)).toBeNull()
   })
 
   it('preserves original citation numbering when a group is filtered (e.g. PubMed-only display)', () => {
     render(<EvidenceCitations items={[{ source: PUBMED_SOURCE, index: 2 }]} />)
-    expect(screen.getByText(/\[E2\] Physical activity and diabetes risk/)).toBeDefined()
+    expect(screen.getByRole('button', { name: /E2.*Physical activity and diabetes risk/ })).toBeDefined()
   })
 
   it('expanding a local source shows metadata but no PMID/DOI', () => {
     render(<EvidenceCitations items={[{ source: LOCAL_SOURCE, index: 1 }]} />)
-    fireEvent.click(screen.getByText(/\[E1\]/))
+    fireEvent.click(screen.getByRole('button', { name: /E1/ }))
     expect(screen.getByText('cdc_diabetes_basics#physical-activity')).toBeDefined()
     expect(screen.getByText('2026-08-23')).toBeDefined()
     expect(screen.queryByText('PMID')).toBeNull()
@@ -69,7 +69,7 @@ describe('EvidenceCitations', () => {
 
   it('expanding a PubMed source shows PMID and DOI, never fabricated', () => {
     render(<EvidenceCitations items={[{ source: PUBMED_SOURCE, index: 1 }]} />)
-    fireEvent.click(screen.getByText(/\[E1\]/))
+    fireEvent.click(screen.getByRole('button', { name: /E1/ }))
     expect(screen.getByText('PMID')).toBeDefined()
     expect(screen.getByText('12345678')).toBeDefined()
     expect(screen.getByText('DOI')).toBeDefined()
@@ -78,16 +78,24 @@ describe('EvidenceCitations', () => {
 
   it('omits DOI row entirely when the source has none', () => {
     render(<EvidenceCitations items={[{ source: { ...PUBMED_SOURCE, doi: '' }, index: 1 }]} />)
-    fireEvent.click(screen.getByText(/\[E1\]/))
+    fireEvent.click(screen.getByRole('button', { name: /E1/ }))
     expect(screen.queryByText('DOI')).toBeNull()
   })
 
-  it('collapses again on a second click', () => {
+  it('collapses again on a second click', async () => {
     render(<EvidenceCitations items={[{ source: LOCAL_SOURCE, index: 1 }]} />)
-    const toggle = screen.getByText(/\[E1\]/)
+    const toggle = screen.getByRole('button', { name: /E1/ })
     fireEvent.click(toggle)
     expect(screen.getByText('Document ID')).toBeDefined()
     fireEvent.click(toggle)
-    expect(screen.queryByText('Document ID')).toBeNull()
+    // The collapse plays a motion/react exit animation before unmounting,
+    // so the content disappears asynchronously rather than instantly.
+    await waitFor(() => expect(screen.queryByText('Document ID')).toBeNull())
+  })
+
+  it('gives each citation card a visually distinct E# chip', () => {
+    render(<EvidenceCitations items={[{ source: LOCAL_SOURCE, index: 1 }]} />)
+    const chip = screen.getByText('E1')
+    expect(chip.className).toContain('evidence-chip')
   })
 })

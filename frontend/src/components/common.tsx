@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import { CheckCircle2 } from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
+import type { ComponentType, ReactNode } from 'react'
 import type { EvidenceSource } from '../api/types'
 
 export function RiskBadge({ tier }: { tier: string | null }) {
@@ -6,10 +8,30 @@ export function RiskBadge({ tier }: { tier: string | null }) {
   return <span className={`badge ${tier.toLowerCase()}`}>{tier}</span>
 }
 
-export function Card({ title, children }: { title?: string; children: ReactNode }) {
+type IconComponent = ComponentType<{ size?: number; strokeWidth?: number }>
+
+export function Card({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title?: string
+  icon?: IconComponent
+  children: ReactNode
+}) {
   return (
     <div className="card">
-      {title && <h2>{title}</h2>}
+      {title &&
+        (Icon ? (
+          <div className="section-head">
+            <span className="icon-badge" aria-hidden="true">
+              <Icon size={16} strokeWidth={2.2} />
+            </span>
+            <h2>{title}</h2>
+          </div>
+        ) : (
+          <h2>{title}</h2>
+        ))}
       {children}
     </div>
   )
@@ -21,11 +43,20 @@ export function ErrorNote({ error }: { error: string | null }) {
 }
 
 export function AgentTrace({ trace }: { trace: string[] }) {
+  const reduceMotion = useReducedMotion()
   if (!trace?.length) return null
   return (
     <ul className="trace">
       {trace.map((step, i) => (
-        <li key={i}>{step}</li>
+        <motion.li
+          key={i}
+          initial={reduceMotion ? false : { opacity: 0, x: -8 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: reduceMotion ? 0 : i * 0.05, duration: 0.25, ease: [0.2, 0, 0, 1] }}
+        >
+          <CheckCircle2 size={14} className="trace-check" aria-hidden="true" />
+          {step}
+        </motion.li>
       ))}
     </ul>
   )
