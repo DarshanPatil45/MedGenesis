@@ -308,6 +308,67 @@ class TestDiagnosisAndTreatmentBan:
         assert "should" not in med_claims[0].claim.lower()
 
 
+class TestBloodGlucoseLabsSurfaced:
+    """Diabetes & Blood Sugar feature: Fasting Glucose and the 2-hour OGTT
+    are recorded via the same generic `lab_result` mechanism as HbA1c, so
+    they should be surfaced into Clinical Analysis the same verbatim way —
+    extending _lab_and_medication_claims rather than adding a parallel
+    path."""
+
+    def test_fasting_glucose_and_ogtt_surfaced_like_hba1c(self, monkeypatch):
+        from app.services import twin as twin_service
+
+        class _FakeDB:
+            pass
+
+        def fake_get_structured_twin(db, patient_id):
+            return {
+                "patient": {}, "clinical": {}, "lifestyle": {},
+                "laboratory": {
+                    "latest": {
+                        "HbA1c": {"value": 6.1, "unit": "%", "recorded_at": "2026-01-01"},
+                        "Fasting Glucose": {"value": 112, "unit": "mg/dL", "recorded_at": "2026-01-02"},
+                        "2-Hour Glucose Tolerance Test": {"value": 155, "unit": "mg/dL", "recorded_at": "2026-01-03"},
+                    },
+                },
+                "medications": {"current": []},
+            }
+
+        monkeypatch.setattr(twin_service, "get_structured_twin", fake_get_structured_twin)
+        monkeypatch.setattr(
+            twin_service, "get_lab_trend",
+            lambda db, patient_id, test_name: {"test_name": test_name, "latest": None, "history": [], "trend": "no_data"},
+        )
+        result = get_clinical_agent().run(FULL_STATE, "diabetes risk", db=_FakeDB(), patient_id=1, use_llm=False)
+        claim_text = " ".join(c.claim for c in result.patient_summary)
+        assert "112" in claim_text and "Fasting Glucose" in claim_text
+        assert "155" in claim_text and "2-Hour Glucose Tolerance Test" in claim_text
+        assert "6.1" in claim_text and "HbA1c" in claim_text
+        glucose_claims = [c for c in result.patient_summary if "Fasting Glucose" in c.claim or "OGTT" in c.claim or "Glucose Tolerance" in c.claim]
+        assert all(c.claim_type == CLAIM_PATIENT_OBSERVATION for c in glucose_claims)
+
+    def test_absent_glucose_labs_produce_no_claim(self, monkeypatch):
+        """The extension must not fabricate a claim for a test that was
+        never recorded — same "only what's on file" guarantee as HbA1c."""
+        from app.services import twin as twin_service
+
+        class _FakeDB:
+            pass
+
+        monkeypatch.setattr(
+            twin_service, "get_structured_twin",
+            lambda db, patient_id: {"clinical": {}, "lifestyle": {}, "laboratory": {"latest": {}}, "medications": {"current": []}},
+        )
+        monkeypatch.setattr(
+            twin_service, "get_lab_trend",
+            lambda db, patient_id, test_name: {"test_name": test_name, "latest": None, "history": [], "trend": "no_data"},
+        )
+        result = get_clinical_agent().run(FULL_STATE, "diabetes risk", db=_FakeDB(), patient_id=1, use_llm=False)
+        claim_text = " ".join(c.claim for c in result.patient_summary)
+        assert "Fasting Glucose" not in claim_text
+        assert "Glucose Tolerance" not in claim_text
+
+
 class TestLabTrendRespectsExistingSemantics:
     def test_uses_get_lab_trend_values_verbatim(self, monkeypatch):
         from app.services import twin as twin_service

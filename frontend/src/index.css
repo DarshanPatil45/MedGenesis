@@ -1,1758 +1,233 @@
+@import "tailwindcss";
+
+/* Self-hosted fonts (@fontsource) — no third-party request, no FOUT. */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-serif/400-italic.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+/* ──────────────────────────────────────────────────────────────────────
+   Tokens — clinical light. Mirrors src/design-system/tokens.ts.
+   Tailwind v4 is CSS-first: this @theme block *is* the config.
+   ────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Surfaces — white-forward, cool clinical grays */
+  --color-page: #f4f7fb;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-subtle: #f7f9fc;
+  --color-border-strong: #dbe3ee;
+  --color-border: #e8edf5;
+
+  /* Text — deep slate, AA-compliant on both page and surface */
+  --color-ink: #0b1220;
+  --color-ink-2: #3a4759;
+  --color-ink-3: #5b6880;
+
+  /* Accent primary — text-safe on white */
+  --color-teal: #0b6e63;
+  --color-blue: #1349b8;
+  /* Brighter siblings for fills, charts and graphics */
+  --color-teal-bright: #15b79e;
+  --color-blue-bright: #2e90fa;
+
+  /* Accent secondary */
+  --color-violet: #6938ef;
+  --color-violet-bright: #875bf7;
+  --color-amber: #b54708;
+  --color-amber-bright: #f79009;
+  --color-rose: #c01048;
+  --color-rose-bright: #f04438;
+
+  /* Radii */
+  --radius-card: 14px;
+  --radius-input: 10px;
+  --radius-pill: 999px;
+}
+
+/* Elevation — layered, low-opacity shadows. The single biggest lever for
+   making a light UI read as engineered rather than flat. */
 :root {
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --surface-solid: #ffffff;
-  --surface-alt: #f1f3f7;
-  --border: #e2e6ee;
-  --text: #14181f;
-  --muted: #63697b;
-
-  --brand: #0d9488;
-  --brand-2: #0d9488;
-  --brand-3: #0d9488;
-  --brand-dark: #0b7d73;
-  --brand-gradient: var(--brand);
-  --brand-gradient-soft: rgba(13, 148, 136, 0.08);
-
-  --low: #157a4d;
-  --moderate: #b3660a;
-  --high: #c22a2a;
-  --flag-bg: #fdf3e2;
-  --flag-border: #ecc482;
-  --block-bg: #fbeae9;
-  --block-border: #e5a8a3;
-  --ok-bg: #e6f4ec;
-  --ok-border: #a4d3b9;
-  --accent-border: rgba(13, 148, 136, 0.32);
-  --chip-hover-bg: rgba(13, 148, 136, 0.1);
-  --header-bg: rgba(255, 255, 255, 0.75);
-  --font-heading: 'Outfit', 'Inter', system-ui, sans-serif;
-
-  /* 8px spacing scale (4px half-step for tight/inline cases only). Every
-     padding/margin/gap in this file is one of these tokens or an inline
-     multiple of 4px — no arbitrary values. */
-  --space-1: 0.25rem; /* 4px */
-  --space-2: 0.5rem; /* 8px */
-  --space-3: 0.75rem; /* 12px */
-  --space-4: 1rem; /* 16px */
-  --space-5: 1.25rem; /* 20px */
-  --space-6: 1.5rem; /* 24px */
-  --space-7: 1.75rem; /* 28px */
-  --space-8: 2rem; /* 32px */
-  --space-10: 2.5rem; /* 40px */
-  --space-12: 3rem; /* 48px */
-
-  --radius: 10px;
-  --radius-lg: 12px;
-  --shadow: 0 1px 2px rgba(20, 24, 31, 0.05), 0 1px 3px rgba(20, 24, 31, 0.04);
-  --shadow-sm: 0 1px 2px rgba(20, 24, 31, 0.05);
-  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(16 24 40 / 0.08), 0 1px 2px -1px rgb(16 24 40 / 0.04);
+  --shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.08), 0 2px 4px -2px rgb(16 24 40 / 0.04);
+  --shadow-lg: 0 12px 16px -4px rgb(16 24 40 / 0.07), 0 4px 6px -2px rgb(16 24 40 / 0.03);
+  --shadow-xl: 0 24px 32px -8px rgb(16 24 40 / 0.10), 0 8px 12px -6px rgb(16 24 40 / 0.04);
+  --ring-inset: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #080a0f;
-    --surface: #0d1118;
-    --surface-solid: #0d1118;
-    --surface-alt: #121821;
-    --border: #232a36;
-    --text: #f5f7fa;
-    --muted: #8993a4;
-
-    --brand: #2dd4bf;
-    --brand-2: #2dd4bf;
-    --brand-3: #2dd4bf;
-    --brand-dark: #5eead4;
-    --brand-gradient: var(--brand);
-    --brand-gradient-soft: rgba(45, 212, 191, 0.14);
-
-    --low: #3fbd85;
-    --moderate: #e0a747;
-    --high: #e2716a;
-    --flag-bg: #2a2214;
-    --flag-border: #4d3f1f;
-    --block-bg: #2a1917;
-    --block-border: #4d2e2a;
-    --ok-bg: #142a1f;
-    --ok-border: #26503a;
-    --accent-border: rgba(45, 212, 191, 0.35);
-    --chip-hover-bg: rgba(45, 212, 191, 0.16);
-    --header-bg: rgba(8, 10, 15, 0.72);
-
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  }
-}
-:root[data-theme='dark'] {
-  --bg: #0d1017;
-  --surface: #151922;
-  --surface-solid: #151922;
-  --surface-alt: #1b2029;
-  --border: #262c38;
-  --text: #e9ebf1;
-  --muted: #8b93a3;
-
-  --brand: #2dd4bf;
-  --brand-2: #2dd4bf;
-  --brand-3: #2dd4bf;
-  --brand-dark: #5eead4;
-  --brand-gradient: var(--brand);
-  --brand-gradient-soft: rgba(45, 212, 191, 0.14);
-
-  --low: #3fbd85;
-  --moderate: #e0a747;
-  --high: #e2716a;
-  --flag-bg: #2a2214;
-  --flag-border: #4d3f1f;
-  --block-bg: #2a1917;
-  --block-border: #4d2e2a;
-  --ok-bg: #142a1f;
-  --ok-border: #26503a;
-  --accent-border: rgba(45, 212, 191, 0.35);
-  --chip-hover-bg: rgba(45, 212, 191, 0.16);
-  --header-bg: rgba(13, 16, 23, 0.72);
-
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-
-* {
-  box-sizing: border-box;
+html {
+  background: var(--color-page);
+  color-scheme: light;
 }
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  background: var(--color-page);
+  color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }
 
-h1 {
-  font-family: var(--font-heading);
-  font-size: 1.4rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  margin: 0 0 var(--space-1);
-}
-h2 {
-  font-family: var(--font-heading);
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin: 0 0 var(--space-3);
-}
-h3 {
-  font-size: 0.92rem;
-  font-weight: 600;
-  margin: 0 0 var(--space-2);
+:focus-visible {
+  outline: 2px solid var(--color-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-a {
-  color: var(--brand);
+::selection {
+  background: color-mix(in oklab, var(--color-blue) 18%, transparent);
+  color: var(--color-ink);
 }
 
-/* Visually hidden but announced to assistive tech — for labels that would
-   otherwise duplicate visible context in a compact header. */
-.sr-only {
-  position: absolute;
-  width: 1px;
+/* ──────────────────────────────────────────────────────────────────────
+   SHELL LAYER — the composed, cinematic surfaces: top bar, stage
+   headers, empty states. On a light ground "cinematic" means layered
+   washes and precise hairlines, never glow.
+   ────────────────────────────────────────────────────────────────────── */
+
+.shell-glass {
+  background: color-mix(in oklab, #ffffff 82%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+/* Blueprint grid — a faint engineering substrate behind stage headers. */
+.shell-grid {
+  background-image:
+    linear-gradient(to right, rgb(11 18 32 / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(11 18 32 / 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* Soft colour wash for stage headers. */
+.shell-wash {
+  background:
+    radial-gradient(60% 120% at 12% -10%, rgb(21 183 158 / 0.10), transparent 60%),
+    radial-gradient(50% 100% at 88% -20%, rgb(46 144 250 / 0.10), transparent 62%);
+}
+
+/* Gradient text for the one key accent per stage. */
+.text-gradient {
+  background: linear-gradient(120deg, var(--color-teal) 0%, var(--color-blue) 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Hairline that fades at both ends. */
+.rule-fade {
   height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  background: linear-gradient(90deg, transparent, var(--color-border-strong) 12%, var(--color-border-strong) 88%, transparent);
 }
 
-/* Skip link — invisible until keyboard-focused, first focusable element on
-   every page, jumps past the header/nav straight to page content. */
-.skip-link {
-  position: absolute;
-  top: -3rem;
-  left: var(--space-2);
-  z-index: 100;
-  background: var(--surface-solid);
-  color: var(--text);
-  padding: var(--space-2) var(--space-4);
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  text-decoration: none;
-  transition: top 0.15s var(--ease);
-}
-.skip-link:focus {
-  top: var(--space-2);
+/* ──────────────────────────────────────────────────────────────────────
+   DATA LAYER — calm, white, precisely bordered. Elevation carries the
+   hierarchy; no wash or glow behind tables, charts or forms.
+   ────────────────────────────────────────────────────────────────────── */
+
+.data-surface {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
 }
 
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
+.data-surface-raised {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg), var(--ring-inset);
 }
 
-/* Compact glass header — the one deliberately translucent surface besides
-   the mobile nav drawer. Sticky so brand/patient/connection context stays
-   reachable while scrolling a long clinical result. */
-.app-header {
+/* Header strip inside a data card — sets off controls from content. */
+.data-header {
+  background: linear-gradient(180deg, var(--color-subtle), var(--color-surface));
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Tabular data: tighter rules, hover affordance, aligned numerals. */
+.data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.data-table thead th {
   position: sticky;
   top: 0;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-  padding: var(--space-3) var(--space-5);
-  background: var(--header-bg);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  border-bottom: 1px solid var(--border);
-}
-
-.app-header-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-.brand-mark {
-  width: 1.9rem;
-  height: 1.9rem;
-  flex-shrink: 0;
-  border-radius: 7px;
-  background: var(--brand);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-}
-.brand-name {
-  font-family: var(--font-heading);
+  z-index: 1;
+  background: var(--color-subtle);
+  border-bottom: 1px solid var(--color-border-strong);
+  font-size: 0.62rem;
   font-weight: 700;
-  font-size: 1.02rem;
-  letter-spacing: -0.01em;
-  line-height: 1.15;
-}
-.brand-name small {
-  display: block;
-  font-family: 'Inter', system-ui, sans-serif;
-  font-weight: 400;
-  font-size: 0.66rem;
-  color: var(--muted);
-  line-height: 1.3;
-  letter-spacing: 0;
-}
-
-.app-header-page {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.86rem;
-  font-weight: 600;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.app-header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-left: auto;
-}
-
-.header-patient-switcher select {
-  max-width: 200px;
-}
-.header-patient-empty {
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-
-.status-dot {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.status-dot span:first-child {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--low);
-}
-.status-dot.down span:first-child {
-  background: var(--high);
-}
-
-.theme-toggle {
-  flex-shrink: 0;
-  background: var(--surface-solid);
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  width: 1.9rem;
-  height: 1.9rem;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s var(--ease), color 0.15s var(--ease);
-}
-.theme-toggle:hover:not(:disabled) {
-  background: var(--surface-alt);
-  color: var(--text);
-}
-
-.app-body {
-  display: flex;
-  flex: 1;
-  position: relative;
-}
-
-.sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  padding: var(--space-5) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-/* Mobile-only nav drawer — a separate element from .sidebar (which stays
-   desktop-only) so its motion/react height animation doesn't fight the
-   persistent desktop layout. */
-.sidebar-mobile {
-  display: none;
-  overflow: hidden;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-.sidebar-mobile .nav {
-  padding: var(--space-3) var(--space-4);
-}
-
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-.nav-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.nav-group-label {
-  padding: 0 var(--space-3);
-  margin-bottom: 2px;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--muted);
-  opacity: 0.75;
+  color: var(--color-ink-3);
+  text-align: left;
+  padding: 0.6rem 1rem;
+  white-space: nowrap;
 }
-.nav a {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: 7px;
-  border-left: 2px solid transparent;
-  text-decoration: none;
-  color: var(--text);
-  font-size: 0.86rem;
-  font-weight: 500;
-  transition: background 0.12s var(--ease), color 0.12s var(--ease), border-color 0.12s var(--ease);
+.data-table tbody td { padding: 0.6rem 1rem; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table tbody tr:hover { background: var(--color-subtle); }
+
+/* Skeletons match final layout; never a mid-page spinner. */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #eef2f7;
+  border-radius: var(--radius-input);
 }
-.nav a svg {
-  flex-shrink: 0;
-  color: var(--muted);
-}
-.nav a:hover {
-  background: var(--surface-alt);
-}
-/* A thin accent indicator — a left border and a color shift — rather than
-   any filled box. Deliberately no background change: the active item
-   should read as "quietly indicated", not outlined or boxed. */
-.nav a.active {
-  border-left-color: var(--brand);
-  color: var(--brand-dark);
-  font-weight: 600;
-}
-.nav a.active svg {
-  color: var(--brand);
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.85), transparent);
+  animation: shimmer 1.6s infinite;
 }
 
-.main {
-  flex: 1;
-  min-width: 0;
-  padding: var(--space-6) var(--space-7) var(--space-12);
-  max-width: 1080px;
+@keyframes ambient-drift {
+  0%, 100% { transform: translate3d(0,0,0) scale(1); }
+  50% { transform: translate3d(0,-14px,0) scale(1.04); }
 }
+.ambient-drift { animation: ambient-drift 18s ease-in-out infinite; }
 
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4) var(--space-5);
-  margin-bottom: var(--space-4);
-  box-shadow: var(--shadow);
+/* Scrollbars tuned to the light ground. */
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; background-clip: content-box; }
+
+input[type='checkbox'] { accent-color: var(--color-teal); }
+
+/* Screen-only by default; .print-only flips that — hidden on screen,
+   shown on paper. Pairs with .no-print for content that needs a different
+   layout in each medium rather than simply disappearing in one of them. */
+.print-only { display: none; }
+
+@media print {
+  .no-print { display: none !important; }
+  .print-only { display: block; }
+  body { background: #fff; }
+  .data-surface, .data-surface-raised { box-shadow: none; border-color: #ccc; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
-    animation: none !important;
-    transition: none !important;
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
-}
-
-.muted {
-  color: var(--muted);
-  font-size: 0.86rem;
-}
-
-.row {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.grid-2 {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--space-4);
-}
-
-button {
-  font: inherit;
-  font-weight: 600;
-  padding: var(--space-2) var(--space-4);
-  border-radius: 7px;
-  border: 1px solid var(--brand);
-  background: var(--brand);
-  color: #fff;
-  cursor: pointer;
-  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), opacity 0.12s var(--ease);
-}
-button:hover:not(:disabled) {
-  background: var(--brand-dark);
-  border-color: var(--brand-dark);
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-button.secondary {
-  background: var(--surface-solid);
-  color: var(--brand);
-  border: 1px solid var(--border);
-}
-button.secondary:hover:not(:disabled) {
-  background: var(--surface-alt);
-  border-color: var(--border);
-}
-
-input,
-select,
-textarea {
-  font: inherit;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-solid);
-  color: var(--text);
-  transition: border-color 0.12s var(--ease);
-}
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14);
-}
-
-label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: var(--muted);
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.86rem;
-}
-th,
-td {
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-th {
-  color: var(--muted);
-  font-weight: 600;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-tbody tr:hover {
-  background: var(--surface-alt);
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-2);
-  border-radius: 999px;
-  font-size: 0.73rem;
-  font-weight: 600;
-  border: 1px solid transparent;
-}
-.badge::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
-.badge.low {
-  background: var(--ok-bg);
-  color: var(--low);
-  border-color: var(--ok-border);
-}
-.badge.moderate {
-  background: var(--flag-bg);
-  color: var(--moderate);
-  border-color: var(--flag-border);
-}
-.badge.high {
-  background: var(--block-bg);
-  color: var(--high);
-  border-color: var(--block-border);
-}
-.badge.neutral {
-  background: var(--surface-alt);
-  color: var(--muted);
-  border-color: var(--border);
-}
-.badge.neutral::before {
-  display: none;
-}
-
-.banner {
-  border-radius: var(--radius);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
-  font-size: 0.85rem;
-  border: 1px solid;
-}
-.banner.disclaimer {
-  background: var(--surface-alt);
-  border-color: var(--border);
-  color: var(--text);
-}
-/* Verdict banners read as a strong system-gate statement — a thick
-   accent-colored left border on the page surface — rather than a
-   uniformly-bordered tinted box like every other card. */
-.banner.approved,
-.banner.flagged,
-.banner.blocked {
-  background: transparent;
-  border: none;
-  border-left: 4px solid var(--low);
-  border-radius: 0;
-  padding: var(--space-4) 0 var(--space-4) var(--space-5);
-}
-.banner.approved {
-  color: var(--low);
-}
-.banner.flagged {
-  border-left-color: var(--moderate);
-  color: var(--moderate);
-}
-.banner.blocked {
-  border-left-color: var(--high);
-  color: var(--high);
-}
-.banner.approved strong,
-.banner.flagged strong,
-.banner.blocked strong {
-  display: block;
-  font-family: var(--font-heading);
-  font-size: 1.05rem;
-  margin-bottom: 2px;
-}
-.banner ul {
-  margin: var(--space-2) 0 0;
-  padding-left: var(--space-4);
-  color: var(--text);
-}
-
-.trace {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  font-size: 0.84rem;
-}
-.trace li {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) 0 var(--space-2) var(--space-4);
-  border-left: 2px solid var(--ok-border);
-}
-.trace-check {
-  flex-shrink: 0;
-  margin-top: 0.15rem;
-  color: var(--low);
-}
-
-.chat-log {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  max-height: 52vh;
-  overflow-y: auto;
-  padding-right: var(--space-1);
-}
-.msg {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius);
-  font-size: 0.88rem;
-  white-space: pre-wrap;
-  max-width: 82%;
-}
-.msg.user {
-  align-self: flex-end;
-  background: var(--brand);
-  color: #fff;
-}
-.msg.agent {
-  align-self: flex-start;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-}
-
-.error {
-  background: var(--block-bg);
-  border: 1px solid var(--block-border);
-  color: var(--high);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius);
-  font-size: 0.86rem;
-  margin-bottom: var(--space-4);
-}
-
-.kv {
-  display: grid;
-  grid-template-columns: minmax(120px, max-content) 1fr;
-  gap: var(--space-1) var(--space-4);
-  font-size: 0.86rem;
-}
-.kv dt {
-  color: var(--muted);
-}
-.kv dd {
-  margin: 0;
-}
-
-/* Digital Twin summary metrics — a denser grid of read-only stat tiles
-   than .grid-2, since these are short label/value pairs rather than form
-   fields or option cards. */
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: var(--space-2);
-}
-.metric-tile {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-alt);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.metric-label {
-  font-size: 0.68rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.metric-value {
-  font-size: 0.95rem;
-  font-weight: 600;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-
-code {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: var(--surface-alt);
-  padding: 0.1rem var(--space-1);
-  border-radius: 4px;
-  font-size: 0.82em;
-}
-
-/* Visible keyboard focus everywhere — buttons/links/inputs/selects all
-   rely on browser defaults today, which are inconsistent across
-   platforms. One explicit ring, applied only for keyboard focus (not
-   mouse clicks), matching :focus-visible support in every browser this
-   app targets. */
-a:focus-visible,
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 2px;
-}
-
-/* A wide table/chart never forces the page itself to scroll horizontally
-   — only its own container does. Used by the model-comparison table and
-   any other wide tabular content. */
-.table-scroll {
-  overflow-x: auto;
-}
-
-/* Small reference chip for an evidence ID cited inline next to a claim
-   (Clinical Analysis) — link-styled but reuses .badge sizing so it sits
-   comfortably in running text. */
-.evidence-chip {
-  display: inline-block;
-  padding: 0.1rem var(--space-2);
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  background: var(--surface-alt);
-  color: var(--brand);
-  border: 1px solid var(--border);
-  text-decoration: none;
-  margin-left: var(--space-1);
-  transition: background 0.12s var(--ease);
-}
-.evidence-chip:hover {
-  background: var(--chip-hover-bg);
-}
-
-/* Evidence citation card — the expandable [E#] source card on Clinical
-   Analysis. The chip repeats the same visual language as the inline
-   evidence-chip reference so a reader connects "[E1] in this claim" with
-   "the E1 card below" at a glance. */
-.evidence-card {
-  padding: 0;
-  margin-bottom: var(--space-2);
-  overflow: hidden;
-}
-.evidence-card-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  text-align: left;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  padding: var(--space-3) var(--space-4);
-}
-.evidence-card-toggle:hover:not(:disabled) {
-  background: var(--surface-alt);
-}
-.evidence-chip-static {
-  flex-shrink: 0;
-  margin-left: 0;
-}
-.evidence-card-title {
-  display: block;
-  font-size: 0.86rem;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.evidence-card-preview {
-  display: block;
-  margin-top: 3px;
-  font-size: 0.78rem;
-  font-style: italic;
-  overflow-wrap: anywhere;
-}
-.evidence-card-caret {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: transform 0.15s var(--ease);
-}
-.evidence-card-caret.open {
-  transform: rotate(180deg);
-}
-.evidence-card .kv {
-  padding: 0 var(--space-4) var(--space-3);
-}
-
-/* Collapsible sections (e.g. the analysis trace) — styled to read as a
-   card-header-like control, consistent with .card's look, rather than the
-   browser's bare default <details>/<summary> triangle. */
-details.card {
-  padding: 0;
-}
-details.card > summary {
-  cursor: pointer;
-  padding: var(--space-4) var(--space-5);
-  font-weight: 600;
-  list-style: none;
-}
-details.card > summary::-webkit-details-marker {
-  display: none;
-}
-details.card > summary::before {
-  content: '▸';
-  display: inline-block;
-  width: var(--space-4);
-  color: var(--muted);
-}
-details.card[open] > summary::before {
-  content: '▾';
-}
-details.card > summary:hover {
-  background: var(--surface-alt);
-}
-details.card > .details-body {
-  padding: 0 var(--space-5) var(--space-4);
-}
-
-/* Lightweight text filter box (Patient Intake's patient table, the safety
-   audit log) — same visual language as any other input, just narrower and
-   inline with a section header. */
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-3);
-}
-.filter-row input[type='search'],
-.filter-row select {
-  max-width: 240px;
-}
-
-/* Section eyebrow — small accent label used above a page's H1 to give
-   pages a bit more visual hierarchy than a bare heading. */
-.eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: var(--space-1);
-}
-.eyebrow svg {
-  width: 13px;
-  height: 13px;
-  color: var(--brand);
-}
-
-/* RandomForest's aggregate contribution claim — names only, no per-patient
-   magnitude, so a plain ranked list rather than a bar chart. */
-.ranked-list {
-  list-style: decimal;
-  padding-left: var(--space-5);
-  font-size: 0.86rem;
-  margin: 0;
-}
-.ranked-list li {
-  margin-bottom: var(--space-1);
-}
-
-/* XGBoost's per-patient SHAP contribution claim, visualized as ranked
-   horizontal bars. Values are parsed for display only from the backend's
-   own deterministic prose — never computed here. */
-.shap-bars {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.shap-row {
-  display: grid;
-  grid-template-columns: 104px 1fr 60px;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: 0.82rem;
-}
-.shap-label {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.shap-track {
-  position: relative;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--surface-alt);
-  overflow: hidden;
-}
-.shap-fill {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  border-radius: 999px;
-}
-.shap-fill.pos {
-  background: var(--high);
-}
-.shap-fill.neg {
-  background: var(--low);
-}
-.shap-value {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.76rem;
-  text-align: right;
-}
-
-/* Icon-forward stat/option tiles (Clinical Analysis option checkboxes,
-   Intake demo-profile picks) — a bordered tile that highlights on
-   hover/selection rather than a bare checkbox+label row. */
-.tile {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface-solid);
-  cursor: pointer;
-  transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
-}
-.tile:hover {
-  border-color: var(--muted);
-}
-button.tile {
-  width: 100%;
-  text-align: left;
-  color: var(--text);
-  font-weight: inherit;
-}
-button.tile:hover:not(:disabled) {
-  border-color: var(--muted);
-  background: var(--surface-solid);
-}
-.tile.selected {
-  border-color: var(--brand);
-  background: var(--brand-gradient-soft);
-}
-.tile-icon {
-  flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface-alt);
-  color: var(--muted);
-}
-.tile.selected .tile-icon {
-  background: var(--brand);
-  color: #fff;
-}
-.tile-body {
-  flex: 1;
-  min-width: 0;
-}
-.tile-title {
-  font-weight: 600;
-  font-size: 0.86rem;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.tile-desc {
-  font-size: 0.78rem;
-  color: var(--muted);
-  margin-top: var(--space-1);
-}
-.tile input[type='checkbox'] {
-  margin-top: var(--space-1);
-  accent-color: var(--brand);
-}
-
-/* Compact option chips (Clinical Analysis question options) — a denser
-   alternative to .tile for a row of toggleable choices. Explanatory text
-   rides along as a native `title` tooltip rather than always-visible
-   subtext, keeping the row to one line. */
-.chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface-solid);
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color 0.12s var(--ease), background 0.12s var(--ease), color 0.12s var(--ease);
-}
-.chip:hover {
-  border-color: var(--muted);
-}
-.chip svg {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: color 0.12s var(--ease);
-}
-.chip.selected {
-  border-color: var(--brand);
-  background: var(--brand-gradient-soft);
-  color: var(--brand-dark);
-}
-.chip.selected svg {
-  color: var(--brand);
-}
-.chip input[type='checkbox'] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
-/* Patient snapshot — a compact, real-data-only card (id, pseudonym, age,
-   sex, and the actual eligibility/synthetic-data flags the API exposes).
-   No field here is ever invented when the backend doesn't supply one. */
-.patient-snapshot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-alt);
-  margin-bottom: var(--space-4);
-}
-.patient-snapshot-id {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: var(--brand);
-}
-.patient-snapshot-name {
-  font-weight: 600;
-}
-.patient-snapshot-meta {
-  font-size: 0.82rem;
-}
-.patient-snapshot-flag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  background: var(--ok-bg);
-  color: var(--low);
-  border: 1px solid var(--ok-border);
-  margin-left: auto;
-}
-.patient-snapshot-flag.off {
-  background: var(--flag-bg);
-  color: var(--moderate);
-  border-color: var(--flag-border);
-}
-.patient-snapshot-flag.synthetic {
-  margin-left: 0;
-  background: var(--surface-solid);
-  color: var(--muted);
-  border-color: var(--border);
-}
-
-/* Digital Twin "recent activity" mini-timeline — a vertical, dotted-line
-   list of real recorded events (currently: medication changes), styled to
-   read as a timeline rather than a plain bullet list. */
-.mini-timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.mini-timeline li {
-  position: relative;
-  padding: 0 0 var(--space-4) var(--space-5);
-  border-left: 2px solid var(--border);
-  font-size: 0.86rem;
-}
-.mini-timeline li:last-child {
-  padding-bottom: 0;
-  border-left-color: transparent;
-}
-.mini-timeline li::before {
-  content: '';
-  position: absolute;
-  left: -5px;
-  top: 4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--brand);
-}
-.mini-timeline-date {
-  display: block;
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-
-/* Section header row used inside cards to pair an icon + title (result
-   sections on Clinical Analysis). */
-.section-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
-}
-.icon-badge {
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface-alt);
-  color: var(--muted);
-  flex-shrink: 0;
-}
-.section-head h2,
-.section-head h3 {
-  margin: 0;
-}
-
-/* Mobile navigation toggle (the hamburger button in the header) — hidden
-   on wider viewports, where the persistent .sidebar is used instead of the
-   .sidebar-mobile drawer. */
-.nav-toggle {
-  display: none;
-}
-
-@media (max-width: 860px) {
-  .app-header {
-    padding: var(--space-3) var(--space-4);
-    gap: var(--space-3);
-  }
-  .app-header-page {
-    display: none;
-  }
-  .header-patient-switcher select {
-    max-width: 140px;
-  }
-  .nav-toggle {
-    display: flex;
-  }
-  .sidebar {
-    display: none;
-  }
-  .sidebar-mobile {
-    display: block;
-  }
-  .app-body {
-    flex-direction: column;
-  }
-  .main {
-    max-width: 100%;
-    padding: var(--space-4);
-  }
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
-  .card {
-    padding: var(--space-4);
-  }
-  th,
-  td {
-    padding: var(--space-2);
-  }
-}
-
-@media (max-width: 480px) {
-  h1 {
-    font-size: 1.2rem;
-  }
-  .msg {
-    max-width: 92%;
-  }
-  .shap-row {
-    grid-template-columns: 76px 1fr 52px;
-    gap: var(--space-2);
-  }
-}
-
-/* ============================================================
-   Command-center layout system — bento grids, workspace split
-   panels, hero stats, pipeline flows, and a custom timeline.
-   These replace the "stack of bordered cards" pattern for the
-   pages that most needed a different information architecture.
-   ============================================================ */
-
-/* Persistent patient-context strip — sits under the header, above
-   every page's content. Real fields only; the "Digital Twin Active"
-   marker only ever appears once a patient is actually selected. */
-.patient-context-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  padding-bottom: var(--space-4);
-  margin-bottom: var(--space-6);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.82rem;
-}
-.patient-context-bar-id {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-weight: 700;
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
-  color: var(--brand);
-}
-.patient-context-bar-name {
-  font-weight: 600;
-}
-.patient-context-bar-flag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-.patient-context-bar-flag.warn {
-  color: var(--moderate);
-}
-.patient-context-bar-twin {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--low);
-}
-.patient-context-bar-twin::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 6px currentColor;
-}
-
-/* Section — a page-level heading block with no card border, used
-   instead of stacking every group of content in a bordered box. */
-.section-block {
-  margin-bottom: var(--space-8);
-}
-.section-title {
-  font-family: var(--font-heading);
-  font-size: 1.6rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  margin: 0 0 var(--space-2);
-}
-.section-lead {
-  color: var(--muted);
-  font-size: 0.92rem;
-  max-width: 64ch;
-  margin: 0;
-}
-
-/* Small uppercase micro-label for a subsection within a larger workspace
-   block (e.g. "PATIENT OBSERVATIONS" inside AI Synthesis) — distinct from
-   a full Section title, used where a bare <h3> would read too plain. */
-.micro-label {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 0 0 var(--space-2);
-}
-
-/* Small decorative-but-real pipeline strip conveying the app's mental
-   model (Patient -> Digital Twin -> Models -> Evidence -> Synthesis ->
-   Safety). Non-interactive; purely orientation. */
-.flow-strip {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 var(--space-6);
-}
-.flow-strip-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px var(--space-2);
-  border-radius: 999px;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted);
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-}
-.flow-strip-step.current {
-  color: var(--bg);
-  background: var(--brand);
-  border-color: var(--brand);
-}
-.flow-strip-arrow {
-  color: var(--border);
-  flex-shrink: 0;
-}
-
-/* Bento grid — asymmetric two-up panels (Digital Twin snapshot beside
-   current-state), borderless-adjacent, divided by a hairline. */
-.bento {
-  display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(260px, 2fr);
-  gap: var(--space-5);
-  margin-bottom: var(--space-6);
-}
-.bento-panel {
-  padding: var(--space-5);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-.bento-panel-label {
-  display: block;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: var(--space-3);
-}
-
-/* Metric cluster — a borderless row of stat blocks separated by
-   hairlines, instead of a table or a grid of individually bordered
-   tiles. Used for model evaluation metrics and quick-glance stats. */
-.metric-cluster {
-  display: flex;
-  flex-wrap: wrap;
-}
-.metric-cluster-item {
-  flex: 1 1 120px;
-  padding: var(--space-4) var(--space-5);
-  border-left: 1px solid var(--border);
-}
-.metric-cluster-item:first-child {
-  border-left: none;
-  padding-left: 0;
-}
-.metric-cluster-label {
-  display: block;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-.metric-cluster-value {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 1.3rem;
-  font-weight: 600;
-}
-
-/* Hero stat — a single dominant model-output number, the visual focal
-   point of the Screening page. */
-.stat-hero {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-5);
-  flex-wrap: wrap;
-  padding: var(--space-7) 0;
-}
-.stat-hero-value {
-  font-family: var(--font-heading);
-  font-size: 5rem;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-.stat-hero-meta {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.stat-hero-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-/* Two-column analytical workspace — the post-analysis Clinical Analysis
-   layout. Side panel is sticky so patient signals stay visible while
-   scrolling the longer synthesis column. */
-.workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-  gap: var(--space-6);
-  align-items: start;
-}
-.workspace-side {
-  position: sticky;
-  top: calc(var(--space-4) + 64px);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-.signal-panel {
-  padding: var(--space-4) var(--space-5);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-.signal-panel-label {
-  display: block;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: var(--space-2);
-}
-.signal-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
-  font-size: 0.84rem;
-}
-.signal-row + .signal-row {
-  border-top: 1px solid var(--border);
-}
-
-/* AI command bar — the redesigned Clinical Analysis question input:
-   one large surface with the submit action inline rather than a plain
-   textarea with a button below it. */
-.command-bar {
-  padding: var(--space-4) var(--space-5);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-.command-bar textarea {
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: 0;
-  font-size: 1rem;
-  resize: none;
-}
-.command-bar textarea:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-.command-bar-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-.command-bar-submit {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.safety-status {
-  margin-bottom: var(--space-6);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--border);
-}
-.safety-status-body {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-}
-.safety-status-icon {
-  flex-shrink: 0;
-  margin-top: var(--space-4);
-}
-.safety-status .banner {
-  margin-bottom: 0;
-}
-
-/* Pipeline flow — a vertical, connected sequence of agent steps (Agent
-   Trace page), each real trace line becomes one connected node. */
-.pipeline {
-  display: flex;
-  flex-direction: column;
-}
-.pipeline-node {
-  display: flex;
-  gap: var(--space-4);
-  position: relative;
-  padding-bottom: var(--space-6);
-}
-.pipeline-node:last-child {
-  padding-bottom: 0;
-}
-.pipeline-node-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex-shrink: 0;
-}
-.pipeline-node-dot {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--ok-bg);
-  color: var(--low);
-  border: 1px solid var(--ok-border);
-  flex-shrink: 0;
-}
-.pipeline-node-line {
-  flex: 1;
-  width: 2px;
-  background: var(--border);
-  margin-top: 4px;
-}
-.pipeline-node-body {
-  padding-top: 3px;
-}
-.pipeline-node-agent {
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 0.9rem;
-}
-.pipeline-node-detail {
-  color: var(--muted);
-  font-size: 0.84rem;
-  margin-top: 2px;
-}
-
-/* Timeline hero — a custom horizontal visualization surface for the
-   Digital Twin's event log. Position is computed inline (percentage
-   along the observed date range) from real event timestamps — never
-   an invented layout. */
-.timeline-hero {
-  padding: var(--space-6) var(--space-6) var(--space-8);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  margin-bottom: var(--space-6);
-}
-.timeline-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-6);
-}
-.timeline-axis {
-  position: relative;
-  height: 2px;
-  background: var(--border);
-  margin: var(--space-6) 0 var(--space-4) 100px;
-}
-.timeline-axis-tick {
-  position: absolute;
-  top: -18px;
-  transform: translateX(-50%);
-  font-size: 0.66rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.timeline-lane {
-  position: relative;
-  height: 44px;
-  margin-bottom: var(--space-2);
-}
-.timeline-lane-label {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted);
-  width: 90px;
-}
-.timeline-lane-track {
-  position: relative;
-  margin-left: 100px;
-  height: 100%;
-  border-bottom: 1px dashed var(--border);
-}
-.timeline-event {
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--brand);
-  border: 2px solid var(--surface);
-  box-shadow: 0 0 0 1px var(--border);
-  cursor: default;
-}
-.timeline-event:hover {
-  box-shadow: 0 0 0 4px var(--brand-gradient-soft);
-}
-.timeline-empty {
-  color: var(--muted);
-  font-size: 0.86rem;
-  padding: var(--space-4) 0;
-}
-
-/* Event stream — compact recent-event rows beneath the timeline hero,
-   replacing a full raw table as the primary view. */
-.event-stream {
-  display: flex;
-  flex-direction: column;
-}
-.event-stream-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--border);
-  font-size: 0.84rem;
-}
-.event-stream-row:first-child {
-  border-top: none;
-}
-.event-stream-date {
-  flex-shrink: 0;
-  width: 92px;
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-
-/* Evidence explorer — tabbed Local/PubMed research reader, replacing
-   two stacked always-visible sections. */
-.evidence-tabs {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-.evidence-tab {
-  padding: var(--space-1) var(--space-3);
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-.evidence-tab.active {
-  border-color: var(--brand);
-  color: var(--brand-dark);
-  background: var(--brand-gradient-soft);
-}
-
-/* Step flow — a compact horizontal stepper used to frame Patient Intake
-   as "onboarding into the Digital Twin" rather than a bare form. */
-.step-flow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 var(--space-7);
-}
-.step-flow-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.step-flow-num {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.66rem;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-}
-.step-flow-arrow {
-  color: var(--border);
-}
-
-@media (max-width: 860px) {
-  .bento {
-    grid-template-columns: 1fr;
-  }
-  .workspace {
-    grid-template-columns: 1fr;
-  }
-  .workspace-side {
-    position: static;
-  }
-  .stat-hero-value {
-    font-size: 3.4rem;
-  }
-  .metric-cluster-item {
-    flex: 1 1 45%;
-    border-left: none;
-    border-top: 1px solid var(--border);
-    padding-left: 0;
-    margin-top: var(--space-2);
-    padding-top: var(--space-2);
-  }
-  .metric-cluster-item:first-child {
-    border-top: none;
-    margin-top: 0;
-    padding-top: 0;
-  }
-  .timeline-lane-track {
-    margin-left: 76px;
-  }
-  .timeline-axis {
-    margin-left: 76px;
-  }
-  .timeline-lane-label {
-    width: 68px;
-    font-size: 0.6rem;
-  }
+  .ambient-drift, .skeleton::after { animation: none !important; }
 }

@@ -1,78 +1,41 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { api } from './api/client'
+import type { Patient } from './api/types'
 
 vi.mock('./api/client', () => ({
   api: {
     health: vi.fn(),
     listPatients: vi.fn(),
     demoProfiles: vi.fn(),
+    auditLog: vi.fn(),
+    safetyPolicy: vi.fn(),
+    timeline: vi.fn(),
+    mlComparison: vi.fn(),
   },
 }))
 
-const THEME_KEY = 'medgenesis.theme'
+const PATIENT: Patient = {
+  id: 7,
+  pseudonym: 'Demo Patient B (moderate risk)',
+  age: 52,
+  sex: 'female',
+  is_synthetic: true,
+  screening_eligible: true,
+  created_at: '2026-01-01T00:00:00Z',
+}
 
-function renderApp() {
+function renderApp(path = '/') {
   return render(
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter initialEntries={[path]}>
       <App />
     </MemoryRouter>,
   )
 }
 
-describe('App shell — theme toggle', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    localStorage.clear()
-    document.documentElement.removeAttribute('data-theme')
-    vi.mocked(api.health).mockResolvedValue({
-      status: 'ok',
-      database: 'sqlite (medgenesis.db)',
-      screening_model: 'screening-baseline-v3-brfss2015',
-      rag_backend: 'chromadb+sentence-transformers',
-      llm: 'unavailable — rule-based fallback',
-      policy_version: '1.1.0',
-    })
-    vi.mocked(api.listPatients).mockResolvedValue([])
-    vi.mocked(api.demoProfiles).mockResolvedValue({})
-  })
-
-  it('defaults to light and switches to dark on click', async () => {
-    renderApp()
-    const toggle = await screen.findByRole('button', { name: /Switch to dark theme/ })
-    expect(document.documentElement.dataset.theme).toBe('light')
-    fireEvent.click(toggle)
-    expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(await screen.findByRole('button', { name: /Switch to light theme/ })).toBeDefined()
-  })
-
-  it('persists the choice to localStorage', async () => {
-    renderApp()
-    const toggle = await screen.findByRole('button', { name: /Switch to dark theme/ })
-    fireEvent.click(toggle)
-    expect(localStorage.getItem(THEME_KEY)).toBe('dark')
-  })
-
-  it('reads a previously stored preference on the next mount', async () => {
-    localStorage.setItem(THEME_KEY, 'dark')
-    renderApp()
-    await screen.findByRole('button', { name: /Switch to light theme/ })
-    expect(document.documentElement.dataset.theme).toBe('dark')
-  })
-
-  it('toggling twice returns to light', async () => {
-    renderApp()
-    const toggle = await screen.findByRole('button', { name: /Switch to dark theme/ })
-    fireEvent.click(toggle)
-    fireEvent.click(screen.getByRole('button', { name: /Switch to light theme/ }))
-    expect(document.documentElement.dataset.theme).toBe('light')
-    expect(localStorage.getItem(THEME_KEY)).toBe('light')
-  })
-})
-
-describe('App shell — skip link and landmarks', () => {
+describe('AppShell', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
@@ -84,15 +47,19 @@ describe('App shell — skip link and landmarks', () => {
       llm: 'unavailable — rule-based fallback',
       policy_version: '1.1.0',
     })
-    vi.mocked(api.listPatients).mockResolvedValue([])
+    vi.mocked(api.listPatients).mockResolvedValue([PATIENT])
     vi.mocked(api.demoProfiles).mockResolvedValue({})
+    vi.mocked(api.auditLog).mockResolvedValue([])
+    vi.mocked(api.safetyPolicy).mockResolvedValue({} as never)
+    vi.mocked(api.timeline).mockResolvedValue({ patient_id: 7, events: [], current_state: {} })
+    vi.mocked(api.mlComparison).mockRejectedValue(new Error('not needed'))
   })
 
-  it('renders a skip link targeting the main content landmark', async () => {
+  it('renders a skip link pointing at the main landmark', async () => {
     renderApp()
     const link = await screen.findByText('Skip to main content')
-    expect(link.getAttribute('href')).toBe('#main-content')
-    expect(document.getElementById('main-content')).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('#main')
+    expect(document.getElementById('main')).not.toBeNull()
   })
 
   it('renders exactly one main landmark', async () => {
@@ -100,73 +67,49 @@ describe('App shell — skip link and landmarks', () => {
     await screen.findByText('Skip to main content')
     expect(screen.getAllByRole('main')).toHaveLength(1)
   })
-})
 
-describe('App shell — header', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    localStorage.clear()
-    vi.mocked(api.listPatients).mockResolvedValue([])
-    vi.mocked(api.demoProfiles).mockResolvedValue({})
-  })
-
-  it('shows the current page name in the header, matching the active route', async () => {
-    vi.mocked(api.health).mockResolvedValue({
-      status: 'ok',
-      database: 'sqlite (medgenesis.db)',
-      screening_model: 'screening-baseline-v3-brfss2015',
-      rag_backend: 'chromadb+sentence-transformers',
-      llm: 'unavailable — rule-based fallback',
-      policy_version: '1.1.0',
-    })
-    render(
-      <MemoryRouter initialEntries={['/clinical-analysis']}>
-        <App />
-      </MemoryRouter>,
-    )
+  it('has no persistent sidebar — navigation lives in the top command bar', async () => {
+    renderApp()
     await screen.findByText('Skip to main content')
-    expect(document.querySelector('.app-header-page')?.textContent).toBe('Clinical Analysis')
+    expect(screen.queryByRole('complementary')).toBeNull()
+    const banner = screen.getByRole('banner')
+    expect(within(banner).getByRole('navigation', { name: 'Journey' })).toBeDefined()
   })
 
-  it('shows a connected status dot when the backend is reachable', async () => {
-    vi.mocked(api.health).mockResolvedValue({
-      status: 'ok',
-      database: 'sqlite (medgenesis.db)',
-      screening_model: 'screening-baseline-v3-brfss2015',
-      rag_backend: 'chromadb+sentence-transformers',
-      llm: 'unavailable — rule-based fallback',
-      policy_version: '1.1.0',
-    })
-    renderApp()
-    expect(await screen.findByText('Backend connected')).toBeDefined()
-    expect(document.querySelector('.status-dot.down')).toBeNull()
+  it('shows the persistent safety disclaimer on every route', async () => {
+    const expected = 'Synthetic data. Educational use only. Not medical advice or a diagnostic device.'
+    for (const path of ['/', '/twin', '/safety', '/careplan', '/chat']) {
+      const { unmount } = renderApp(path)
+      await screen.findByText('Skip to main content')
+      expect(screen.getAllByText(expected).length).toBeGreaterThan(0)
+      unmount()
+    }
   })
 
-  it('shows an unreachable status dot when the health check fails', async () => {
-    vi.mocked(api.health).mockRejectedValue(new Error('network error'))
-    renderApp()
-    expect(await screen.findByText('Backend unreachable')).toBeDefined()
-    expect(document.querySelector('.status-dot.down')).not.toBeNull()
+  it('marks the journey stage for the current route with aria-current', async () => {
+    renderApp('/twin')
+    await screen.findByText('Skip to main content')
+    const current = screen.getByRole('link', { current: 'step' })
+    expect(current.textContent).toBe('Digital Twin')
   })
 
-  it('opens and closes the mobile nav drawer from the header toggle', async () => {
-    vi.mocked(api.health).mockResolvedValue({
-      status: 'ok',
-      database: 'sqlite (medgenesis.db)',
-      screening_model: 'screening-baseline-v3-brfss2015',
-      rag_backend: 'chromadb+sentence-transformers',
-      llm: 'unavailable — rule-based fallback',
-      policy_version: '1.1.0',
-    })
+  it('opens the mobile route menu from the command bar', async () => {
     renderApp()
-    const toggle = await screen.findByRole('button', { name: 'Open navigation menu' })
-    expect(document.querySelector('.sidebar-mobile')).toBeNull()
+    const toggle = await screen.findByRole('button', { name: 'Open menu' })
+    expect(document.getElementById('app-mobile-nav')).toBeNull()
 
     fireEvent.click(toggle)
-    expect(document.querySelector('.sidebar-mobile')).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Close navigation menu' })).toBeDefined()
+    expect(document.getElementById('app-mobile-nav')).not.toBeNull()
+    expect(screen.getByRole('navigation', { name: 'All screens' })).toBeDefined()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close navigation menu' }))
-    await waitFor(() => expect(document.querySelector('.sidebar-mobile')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Close menu' }))
+    await waitFor(() => expect(document.getElementById('app-mobile-nav')).toBeNull())
+  })
+
+  it('surfaces the selected patient in the command bar chip', async () => {
+    renderApp()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Selected patient: Demo Patient B/ })).toBeDefined(),
+    )
   })
 })

@@ -1,22 +1,146 @@
-# MedGenesis — Agentic AI Healthcare System for Type 2 Diabetes
+# MedGenesis
 
-> **Educational prototype. Not medical advice, not a diagnostic device.**
-> Every clinically-sensitive output is gated by a policy-driven safety agent
-> before it reaches a user. All data is synthetic or public and de-identified.
+### AI-Assisted Clinical Decision Support Research Prototype
 
-A multi-agent system built around a longitudinal **Patient Digital Twin**
-rather than a single-shot prediction. An orchestrator routes work across
-specialist agents, and a Safety/Clinician-Review Agent reviews every
-clinically-sensitive output before it is shown.
+> **Research prototype. Not medical advice, not a diagnostic device, and not
+> treatment-authoritative.** Every clinically-sensitive output is reviewed by
+> a deterministic Safety Agent before it reaches a user. All patient data in
+> this repository is synthetic or public and de-identified.
 
-**Main capabilities:** a Digital Twin that never overwrites patient
-history; a screening-risk RandomForest (production) with an XGBoost
-candidate for comparison, including real per-patient SHAP explanations;
-evidence retrieval that cites its sources, from a local curated corpus and
-optionally live PubMed; a Clinical Analysis Agent that composes all of the
-above into one structured, cited, grounded response with tested
-hallucination defenses; a what-if simulator; and a deterministic safety
-gate that reviews every sensitive output before it's returned.
+MedGenesis is a multi-agent research prototype exploring what AI-assisted
+clinical decision support looks like when it is built around a longitudinal
+**Patient Digital Twin** instead of a single-shot prediction. An orchestrator
+routes work across specialist agents — a production risk model, a candidate
+model kept alongside it for comparison, a medical-evidence retriever, a
+what-if simulator, and a Clinical Analysis Agent that composes all of it into
+one cited, structured response — and every clinically-sensitive output is
+reviewed by a Safety Agent before it is shown.
+
+The system does not diagnose, does not prescribe, and does not claim
+autonomous clinical decision-making. It is a decision-*support* research
+prototype: every number is sourced, every claim is traceable to a specific
+model, evidence passage, or recorded patient fact, and every place it doesn't
+know something, it says so instead of guessing.
+
+## Technology stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| Frontend | React 19 + TypeScript + Vite | Typed components, fast dev loop, no build-tool overhead |
+| Frontend state | React Context (no Redux/Zustand) | The state shape is small enough that a dedicated library would be overhead |
+| Frontend motion | `motion` (Framer Motion's successor package) | Restrained entrance/expand animations, respects `prefers-reduced-motion` |
+| Frontend icons | `lucide-react` | Consistent line-icon set used throughout the nav and section headers |
+| Styling | Plain CSS with custom properties | A small, hand-rolled design-token system (spacing scale, light/dark themes) — no CSS framework needed at this scale |
+| Backend | FastAPI (Python) | Async-capable, typed request/response schemas via Pydantic, free interactive API docs |
+| Orchestration | LangGraph `StateGraph` | Deterministic agent routing — routing is data, not an LLM decision, so the safety gate can't be routed around |
+| Production model | scikit-learn RandomForest | Screening-risk baseline, selected by cross-validated ROC-AUC over logistic regression |
+| Candidate model | XGBoost | Trained on the identical data/features/split for a fair, transparent comparison |
+| Explainability | SHAP (`TreeExplainer`) | Exact (not approximate) per-patient feature attribution for tree ensembles |
+| Evidence retrieval | ChromaDB + `sentence-transformers` | Embedded vector store, local-only; falls back to a deterministic keyword ranker if unavailable |
+| Literature retrieval | NCBI E-utilities (PubMed) | The standard free public API for medical literature, opt-in per request |
+| Database | SQLite | Zero-install, zero-config — the whole project runs with `pip install` and nothing else |
+| LLM (optional) | Mistral API → Ollama → rule-based fallback | Three-tier fallback; every non-chat capability works fully offline with no LLM at all |
+
+## Key capabilities
+
+- **Patient Digital Twin** — an event-sourced, append-only patient timeline.
+  Nothing is ever overwritten; "current state" is always a computed fold over
+  the log, so every displayed value is traceable to the exact event it came
+  from.
+- **Production + candidate risk models** — a RandomForest screening-risk
+  baseline in production, with an XGBoost candidate kept alongside it for
+  transparent, honest comparison (never silently promoted).
+- **Per-patient SHAP explanations** — real, exact feature-attribution values
+  for the candidate model's score on the specific patient being viewed, never
+  presented as a cause of the patient's risk.
+- **Evidence-grounded retrieval** — a local curated medical-evidence corpus
+  (ChromaDB) plus optional live PubMed search, every citation traceable to a
+  specific `[E#]` reference.
+- **Clinical Analysis Agent** — composes the Digital Twin, both models,
+  retrieved evidence, and an optional what-if simulation into one structured,
+  cited response, with tested defenses against fabricated citations and
+  model-score mismatches.
+- **What-if simulation** — forks a copy of the Digital Twin, applies a
+  transparent delta heuristic, and projects a risk trajectory without ever
+  touching the real patient timeline.
+- **Deterministic Safety Agent** — a YAML policy engine (not an LLM judge)
+  that reviews every clinically-sensitive output before it is returned,
+  structurally on every route.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    UI["React + Vite frontend<br/>8 pages"] -->|REST / JSON| API["FastAPI<br/>6 routers"]
+    API --> ORCH["Orchestrator Agent<br/>LangGraph StateGraph<br/>deterministic routing by mode"]
+
+    ORCH --> INTAKE["intake route<br/>Screening + Evidence + Care Plan"]
+    ORCH --> SIMR["simulation route<br/>What-if delta model"]
+    ORCH --> CHATR["chat route<br/>Conversational agent (LLM / rules)"]
+    ORCH --> CLINR["clinical route<br/>Clinical Analysis Agent"]
+
+    CLINR --> RF["RandomForest — production"]
+    CLINR --> XGB["XGBoost — candidate + per-patient SHAP"]
+    CLINR --> EVID["Evidence Agent<br/>local ChromaDB + optional PubMed"]
+    CLINR --> SIM2["Simulation Agent (optional)"]
+
+    INTAKE --> SAFETY["Safety / Clinician-Review Agent<br/>YAML policy — not an LLM judge<br/>APPROVED / FLAGGED / BLOCKED"]
+    SIMR --> SAFETY
+    CHATR --> SAFETY
+    CLINR --> SAFETY
+
+    SAFETY --> LOG[("safety_audit_log<br/>append-only")]
+    SAFETY --> TWIN[("Patient Digital Twin<br/>event-sourced timeline, SQLite")]
+    TWIN --> UI
+```
+
+Every route above passes through the Safety Agent before returning — this is
+a structural property of the LangGraph edges, not a convention (see
+[docs/SAFETY.md](docs/SAFETY.md)).
+
+### Agents
+
+| Agent | Implementation | Notes |
+|---|---|---|
+| **Orchestrator** | LangGraph `StateGraph` | Deterministic routing — an LLM never decides whether the safety gate runs |
+| **Patient Digital Twin** | Event-sourced `timeline_events` | Append-only; current state is a materialized fold, never an overwrite |
+| **Screening Baseline** | scikit-learn RandomForest | Production. Educational screening-risk only, with data-completeness eligibility gating |
+| **XGBoost candidate** | scikit-learn-compatible XGBoost | Candidate, never promoted. Real per-patient SHAP via `TreeExplainer` |
+| **Evidence (RAG)** | sentence-transformers + ChromaDB | Falls back to a keyword ranker if those aren't installed |
+| **PubMed** | NCBI E-utilities | Opt-in per request; abstract/metadata scope only, degrades to "no PubMed evidence" on any failure |
+| **Clinical Analysis** | Composition layer over the above | Structured, cited claims; tested hallucination defenses (fabricated citations, model-score mismatches) |
+| **What-if input** | Structured deltas, or free text | A deterministic parser, not an LLM — unrecognized phrasing is reported, never guessed at |
+| **What-if Simulation** | Transparent delta model | Forks the twin; produces a risk *trajectory*, never writes to the real timeline |
+| **Care Plan** | Rules table (+ optional LLM phrasing) | The LLM rephrases; it never chooses recommendations |
+| **Conversational** | Mistral → Ollama → rules | Three-tier fallback; always works offline |
+| **Safety / Clinician-Review** | YAML policy engine | Deterministic and auditable |
+
+## Key distinctions
+
+MedGenesis is deliberately explicit about several distinctions that are easy
+to blur in a clinical-AI demo. The UI and the underlying data enforce all
+four:
+
+- **Production model vs. candidate model.** RandomForest is the deployed
+  production model; XGBoost is a candidate kept only for comparison. The
+  frontend labels them "PRODUCTION" and "CANDIDATE" with visibly distinct
+  styling everywhere both appear — scoring marginally better on every
+  reported metric does not promote the candidate.
+- **Model contribution vs. causality.** SHAP values and feature importances
+  describe what a model weighted when producing a score. They are displayed
+  with an explicit disclaimer — *"Feature contributions describe how model
+  inputs influenced the prediction. They do not establish causality."* —
+  and are never phrased as a cause of the patient's risk.
+- **Actual patient data vs. simulation data.** Digital Twin values are
+  recorded patient history. What-if simulation output is a projected
+  trajectory from a documented delta heuristic, labeled "Model Simulation"
+  and never rendered as if it were a real measurement or a clinical
+  forecast.
+- **Retrieved evidence vs. AI-generated inference.** Every evidence-backed
+  claim carries a numbered citation (`[E1]`, `[E2]`, …) tied to a specific
+  retrieved passage. Claims the model synthesizes beyond what evidence
+  directly states are separately tagged as inference — never presented with
+  the same certainty as a cited source.
 
 ## Documentation
 
@@ -27,10 +151,10 @@ This README covers setup and a project overview. For depth:
 | [docs/FINAL_REPORT.md](docs/FINAL_REPORT.md) | **Start here** — the complete, consolidated project story: motivation, architecture, every subsystem, evaluation, limitations, future work |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full design + phase-by-phase build history |
 | [docs/DIGITAL_TWIN.md](docs/DIGITAL_TWIN.md) | Event-sourced patient state model |
-| [docs/ML.md](docs/ML.md) / [docs/ML_BASELINE.md](docs/ML_BASELINE.md) / [docs/ML_VALIDATION.md](docs/ML_VALIDATION.md) | Model training, baseline methodology, and Phase 8's independent re-verification of every reported metric |
+| [docs/ML.md](docs/ML.md) / [docs/ML_BASELINE.md](docs/ML_BASELINE.md) / [docs/ML_VALIDATION.md](docs/ML_VALIDATION.md) | Model training, baseline methodology, and an independent re-verification of every reported metric |
 | [docs/RAG.md](docs/RAG.md) | Local + PubMed evidence retrieval |
 | [docs/CLINICAL_ANALYSIS.md](docs/CLINICAL_ANALYSIS.md) | The Clinical Analysis Agent and its frontend |
-| [docs/SAFETY.md](docs/SAFETY.md) | The safety policy gate, including the historical metformin false-positive bug and its fix |
+| [docs/SAFETY.md](docs/SAFETY.md) | The safety policy gate, including a historical false-positive bug and its fix |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What's protected, and the real gap (no auth layer) stated plainly |
 | [docs/TESTING.md](docs/TESTING.md) | Exact test counts and coverage, per file |
 | [docs/EVALUATION.md](docs/EVALUATION.md) | Formal evaluation — every figure labeled measured/observed/not measured |
@@ -50,8 +174,14 @@ cd backend
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python -m app.ml.train_screening_model      # writes app/ml/artifacts/ (once)
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --env-file .env
 ```
+
+> **`--env-file .env` is required.** Nothing in the code calls `load_dotenv()` —
+> `app/services/llm.py` reads `os.environ` directly. Without the flag the keys
+> in `backend/.env` are never in the process environment, `GET /api/health`
+> reports `llm: unavailable — rule-based fallback`, and Clinical Analysis
+> degrades to a single deterministic sentence instead of a real synthesis.
 
 **Terminal 2 — frontend:**
 
@@ -84,120 +214,85 @@ curl -X POST localhost:8000/api/patients/demo \
 
 ---
 
-## Architecture
+## Digital Twin
 
-```
-                    React + Vite frontend (8 pages)
-                                │  REST/JSON
-                            FastAPI (6 routers)
-                                │
-                    Orchestrator Agent (LangGraph StateGraph)
-             deterministic routing by mode, shared state + trace
-                                │
-   ┌───────────┬────────────────┼─────────────────┐
-   │           │                │                 │
- intake    simulation         chat            clinical
-   │           │                │                 │
-Screening   What-if      Conversational    Clinical Analysis Agent
-+ Evidence  Simulation    (LLM/rules)     (composes: Screening RF +
-+ Care Plan (delta model) + Evidence tool   XGBoost candidate + Evidence
-                                            (local + PubMed) + Simulation)
-   │           │                │                 │
-   └───────────┴────────┬───────┴─────────────────┘
-                        │
-        Safety / Clinician-Review Agent  ← YAML policy, not an LLM judge
-        APPROVED / FLAGGED / BLOCKED → append-only safety_audit_log
-                        │
-              Patient Digital Twin (event-sourced timeline, SQLite)
-```
+Every recorded fact — a measurement, a lifestyle log, a lab result, a
+medication change — is an append-only row in `timeline_events`. Nothing is
+ever updated or deleted. A patient's "current state" is always a
+materialized view, computed on read by folding the log and letting the
+latest value per field win, so every value the UI shows is traceable back to
+the specific event it came from. Lab history (e.g. HbA1c) is never collapsed
+to a single number, and its trend label (`no_data` / `insufficient_data` /
+`stable` / `increasing` / `decreasing` / `mixed`) is computed by the backend
+from the recorded values' relative order — the frontend never invents a
+clinical threshold. Recorded medication history is displayed as fact, never
+as a recommendation.
 
-Every route above passes through the Safety Agent before returning — this
-is a structural property of the LangGraph edges, not a convention (see
-[docs/SAFETY.md](docs/SAFETY.md)).
+## Machine learning: production vs. candidate
 
-Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Consolidated,
-current-state final report: **[docs/FINAL_REPORT.md](docs/FINAL_REPORT.md)**
-— the right starting point if you're reading this project for the first
-time. Original pre-extension project report:
-[docs/REPORT.md](docs/REPORT.md).
+**RandomForest (production)** and **XGBoost (candidate)** train on the
+identical CDC BRFSS 2015 dataset, 21 features, target definition, and
+80/20 stratified split (`random_state=42`) — so any metric difference
+reflects the algorithm, not the data.
 
-### Agents
-
-| Agent | Implementation | Notes |
+| Metric | RandomForest (production) | XGBoost (candidate) |
 |---|---|---|
-| **Orchestrator** | LangGraph `StateGraph` | Deterministic routing — an LLM never decides whether the safety gate runs |
-| **Patient Digital Twin** | Event-sourced `timeline_events` | Append-only; current state is a materialized fold, never an overwrite |
-| **Screening Baseline** | scikit-learn | Educational screening-risk only, with data-completeness eligibility gating |
-| **Evidence (RAG)** | sentence-transformers + ChromaDB | Falls back to a keyword ranker if those aren't installed. Head-to-head comparison: [ARCHITECTURE.md §13.5](docs/ARCHITECTURE.md#135-semantic-rag-was-enabled-and-a-second-real-bug-was-found-in-it) |
-| **What-if input** | Structured deltas, or free text ("what if I lost weight and exercised more") | A deterministic parser, not an LLM — unrecognized phrasing is reported, never guessed at |
-| **What-if Simulation** | Transparent delta model | Forks the twin; produces a risk *trajectory*, never writes to the real timeline |
-| **Care Plan** | Rules table (+ optional LLM phrasing) | The LLM rephrases; it never chooses recommendations |
-| **Conversational** | Mistral → Ollama → rules | Three-tier fallback; always works offline |
-| **Safety / Clinician-Review** | YAML policy engine | Deterministic and auditable |
+| Accuracy | 0.7164 | 0.7206 |
+| Precision | 0.3297 | 0.3352 |
+| Recall | 0.7745 | 0.7865 |
+| F1 | 0.4625 | 0.4701 |
+| ROC-AUC | 0.8185 | 0.8255 |
 
----
+XGBoost scores marginally higher on every reported metric on this one
+held-out split — this does **not** promote it. Nothing in the codebase
+auto-switches which model is used for screening; the candidate is only
+*additionally* run, side by side, when a Clinical Analysis explicitly
+requests model comparison. Full validation methodology, including how these
+numbers were independently reproduced from the persisted model artifacts:
+[docs/ML_VALIDATION.md](docs/ML_VALIDATION.md).
 
-## Design decisions worth reading
+## Explainability: SHAP
 
-### 1. The project switched training datasets mid-build
+RandomForest exposes **aggregate, trained-model-level** feature importance
+only — never patient-specific, and labeled as such everywhere it's shown.
+XGBoost additionally computes **real per-patient SHAP values**
+(`shap.TreeExplainer` on that one patient's own feature vector) when a
+Clinical Analysis includes model comparison, visualized as ranked,
+color-coded horizontal bars (a feature pushing the score higher vs. lower).
+Neither measure is, or is presented as, a cause of the patient's risk —
+every generated claim referencing feature contributions carries an explicit
+non-causal disclaimer, enforced at generation time.
 
-The screening model was originally trained on the **Pima Indians Diabetes
-Dataset** — 768 rows, exclusively women of Pima Heritage, Arizona, 1980s. It
-now trains on the CDC's **2015 BRFSS Diabetes Health Indicators survey** —
-253,680 real, self-reported responses from the general US adult population
-(UCI ML Repository #891; US government work, public domain). `pima.csv` has
-been removed from the repo; its dataset is no longer read by anything.
+## Evidence: local RAG + PubMed
 
-This changed more than the numbers. Pima's population restriction (only
-applicable to one demographic) is gone — the eligibility gate is now a
-**data-completeness check** instead (see decision #2). And BRFSS is a survey,
-not a lab panel: it records physical activity and smoking as yes/no answers,
-not continuous quantities, and has no blood-glucose field at all — so the
-What-if Simulator's `glucose_delta` hypothesis is gone, replaced by a new
-`smoker_delta` lever that flips a binary flag rather than scaling a number.
+Two sources, always clearly distinguished: a small local knowledge base
+(CDC "Diabetes Basics," WHO "Diabetes" fact sheet — chunked by section,
+embedded via `sentence-transformers` into ChromaDB, with a deterministic
+keyword-overlap fallback when those dependencies aren't installed) and
+optional live PubMed (NCBI E-utilities — abstract/metadata scope, opt-in per
+request, degrades to "no PubMed evidence" on any failure rather than
+crashing or blocking local results). A combined query fuses both by
+Reciprocal Rank Fusion on rank position only — never a fabricated
+cross-source score — and deduplicates by document ID, DOI, or normalized
+title. No PubMed retrieval-accuracy claim is made anywhere in this project;
+the evaluation infrastructure (Hit@K, MRR) exists and is tested, but its
+expert-labelled ground truth is intentionally empty — no domain expert has
+labelled query/document relevance for this project.
 
-Full writeup, including a second real bug the switch surfaced in the RAG
-backend's similarity metric: **[ARCHITECTURE.md §13.7](docs/ARCHITECTURE.md)**.
+## Clinical Analysis Agent
 
-**Served model:** random forest, test ROC-AUC **0.818**, accuracy 0.716,
-precision 0.330, recall 0.774, F1 0.463 (202,944 train / 50,736 test).
-Cross-validated ROC-AUC 0.819. Precision is low because the model is
-class-weight-balanced toward not missing positive cases — a screening tool's
-usual tradeoff — reported honestly rather than picking a threshold that looks
-better.
-
-### 2. The screening model refuses to score incomplete profiles — on purpose
-
-BRFSS applies to the general population, so (unlike the original Pima model)
-there is no demographic restriction on who can be screened. The real
-constraint is **data completeness**: the model needs all 21 of its trained
-inputs, and forcing a prediction from a partially-filled profile would return
-a confident-looking number with no real basis.
-
-So the agent checks every required field is on file *before* scoring, and
-returns a structured `unavailable_for_profile` response naming exactly what's
-missing, instead of substituting a guess. Demo Patient C ships with a
-deliberately incomplete history so this path is part of the demo, not hidden
-as an edge case.
-
-### 3. A target-leak was found in the original (Pima-era) training pipeline
-
-Before the dataset switch, the spec called for **per-outcome median
-imputation** on Pima. That leaked the label: 49% of `Insulin` values were
-missing, and per-outcome imputation filled every one with exactly `100.0`
-(non-diabetic) or `168.0` (diabetic), so the imputed value *was* the label
-re-encoded as a feature.
-
-| | Insulin importance | Test ROC-AUC |
-|---|---|---|
-| Per-outcome (leaky) | 0.409 | 0.941 |
-| Plain train-median (served) | 0.066 | 0.813 |
-
-The BRFSS dataset that replaced Pima has zero nulls and needs no imputation
-step at all, so this specific bug no longer applies — but the general lesson
-(a preprocessing step that consults the target leaks it, even when correctly
-fitted on the training split alone) is preserved in full, worked example and
-all: **[docs/LEAKAGE.md](docs/LEAKAGE.md)**.
+A composition layer, not a reimplementation of any underlying agent — it
+calls the same screening, evidence, and simulation agents everything else in
+the system uses. Its output is a structured set of typed claims (patient
+observation / model observation / evidence-supported / inference /
+uncertainty), each optionally citing specific evidence IDs. Tested grounding
+defenses: a fabricated `[E#]` citation is stripped and flagged; a claimed
+model name not actually used is flagged; a claimed numeric score that
+doesn't match the real computed value (outside a small rounding tolerance)
+is flagged. Retrieved evidence text is wrapped in an explicit
+data/instruction delimiter the system prompt tells the LLM never to obey as
+a command, defending against prompt injection via a malicious or adversarial
+source passage.
 
 ---
 
@@ -216,15 +311,15 @@ and the audit log is reproducible.
 
 Blocks diagnostic phrasing, medication/dosage advice, and false certainty.
 Flags High risk tiers, implausibly large simulation swings, urgent symptoms,
-and any output missing its educational-scope marker. Every decision is written
-to the append-only `safety_audit_log` and is visible on the **Agent Trace &
-Safety** page.
+and any output missing its educational-scope marker. Every decision is
+written to the append-only `safety_audit_log` and is visible on the **Agent
+Trace & Safety** page.
 
 The conversational agent's own prompt restrictions are only a first line of
-defence — a small local model cannot be trusted to police itself, so the gate
-re-checks its output independently. A test simulates a rogue LLM emitting
-`"you have diabetes … start taking metformin"` and asserts it is blocked and
-never persisted to the transcript.
+defence — a small local model cannot be trusted to police itself, so the
+gate re-checks its output independently. A test simulates a rogue LLM
+emitting `"you have diabetes … start taking metformin"` and asserts it is
+blocked and never persisted to the transcript.
 
 ---
 
@@ -252,10 +347,24 @@ Tried in order; the first available wins:
 2. **Ollama** — local, free, open-source. `ollama pull llama3.2:3b`
 3. **Rule-based responder** — no dependencies, always available.
 
+Setting up Ollama (recommended — no key, no rate limit):
+
+```bash
+brew install ollama
+ollama serve            # leave running in its own terminal
+ollama pull llama3.2:3b # matches OLLAMA_MODEL in backend/.env
+```
+
+> `/api/health` names only the **first available** backend, which is Mistral
+> whenever a key is set. `LLMRouter.generate()` still falls through on a failed
+> call, so a rate-limited Mistral silently hands off to Ollama — health can read
+> `mistral:…` while Ollama is doing the work. Check the backend log to see which
+> one actually answered.
+
 The active backend is logged at startup and reported by `/api/health`, so it
-is obvious during grading which path is live. **Everything except chat
-phrasing is deterministic and runs fully offline** — screening, simulation,
-evidence retrieval, care-plan rules and the safety gate need no LLM at all.
+is obvious which path is live. **Everything except chat phrasing is
+deterministic and runs fully offline** — screening, simulation, evidence
+retrieval, care-plan rules and the safety gate need no LLM at all.
 
 ---
 
@@ -284,25 +393,39 @@ Interactive docs at `/docs`.
 
 ---
 
-## Tests
+## Validation
+
+The numbers below are the actual results of the last full verification pass
+— nothing here is estimated.
+
+| Check | Result |
+|---|---|
+| Frontend tests (`vitest`) | **49 / 49 passed** |
+| Backend tests (`pytest`) | **390 passed, 1 skipped** (skip is an opt-in live-PubMed test, not part of the required suite) |
+| TypeScript check (`tsc --noEmit`) | Passed, no errors |
+| Production build (`vite build`) | Passed |
+| Responsive verification (Playwright) | Passed at **1440 / 1280 / 1024 / 768 / 390 px** |
+| Theme verification | Both light and dark themes checked at every breakpoint above |
+| Console errors during verification | None observed |
+| Horizontal page scrolling | None observed at any breakpoint |
+
+Backend coverage includes the safety policy (block/flag/approve,
+determinism, word-boundary false positives, a historical medication-name
+false-positive regression), eligibility gating, twin append-only semantics,
+lab trend labeling (0/1/2/3+ points), simulation isolation from the real
+timeline, the free-text hypothesis parser, both RAG backends (including a
+regression guard on the Chroma cosine-similarity fix), multi-source evidence
+fusion (local + PubMed), hallucination defense (fabricated citations,
+model-name and numeric-score mismatches), privacy boundaries (no patient
+identifiers in PubMed/LLM calls or logs), error resilience under component
+failure, and end-to-end smoke tests over the API covering both a
+screening-eligible patient and one with an incomplete recorded history.
+Exact per-file counts and methodology: [docs/TESTING.md](docs/TESTING.md).
 
 ```bash
 cd backend && source venv/bin/activate && python -m pytest tests/ -q   # 391 tests (1 skipped: opt-in live PubMed test)
-cd frontend && npm test                                                # 26 tests
+cd frontend && npm test                                                # 49 tests
 ```
-
-Backend coverage includes the safety policy (block/flag/approve, determinism,
-word-boundary false positives, the historical metformin false-positive
-regression), eligibility gating, twin append-only semantics, lab trend
-labeling (0/1/2/3+ points), simulation isolation from the real timeline,
-the free-text hypothesis parser, both RAG backends (including a regression
-guard on the Chroma cosine-similarity fix), multi-source evidence fusion
-(local + PubMed), hallucination defense (fabricated citations, model-name
-and numeric-score mismatches), privacy boundaries (no patient identifiers
-in PubMed/LLM calls or logs), error resilience under component failure,
-and end-to-end smoke tests over the API covering **both a
-screening-eligible patient and one with an incomplete recorded history**.
-Exact per-file counts and methodology: [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
@@ -315,60 +438,73 @@ Exact per-file counts and methodology: [docs/TESTING.md](docs/TESTING.md).
 | Knowledge base | WHO "Diabetes" fact sheet | **© WHO — copyrighted, not public domain.** Used with attribution under [WHO's permissions policy](https://www.who.int/about/policies/publishing/copyright) |
 | Demo patients | Generated (`app/ml/synthetic_patients.py`) | Fictional |
 
-WHO attribution, source URL and access date are stored in the vector metadata
-and displayed with every WHO-derived excerpt in the UI.
+WHO attribution, source URL and access date are stored in the vector
+metadata and displayed with every WHO-derived excerpt in the UI.
 
 ---
 
 ## Limitations
 
-Full, consolidated list (including ones not repeated here — no auth layer,
-no clinical validation, no expert-labelled PubMed evaluation, XGBoost
-candidate-model status): **[docs/LIMITATIONS.md](docs/LIMITATIONS.md)**.
-The ones most relevant to the ML baseline specifically:
+Honest, not hidden. Full, consolidated list:
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md). The ones worth knowing before
+you read anything else:
 
+- **Research prototype, not clinically validated.** No component here has
+  been validated against real clinical outcomes or reviewed by a licensed
+  clinician.
+- **Not diagnostic.** The system never states whether a patient has, does
+  not have, or will/will not develop diabetes or prediabetes — the Safety
+  Agent blocks diagnostic phrasing outright.
+- **Not treatment-authoritative.** The system never recommends starting,
+  stopping, or changing a medication or dose. Recorded medication history is
+  shown as fact, never as a recommendation.
+- **No authentication or authorization layer.** Any client that can reach
+  the API can read or write any patient's data. This is the single most
+  consequential gap in the current system and is the top priority in
+  [Future work](#future-work), not something silently deferred.
 - **BRFSS is self-reported survey data, not lab measurements.** Every field
-  is a telephone-survey answer, subject to recall accuracy, non-response, and
-  telephone-survey coverage bias. The model is an educational screening-risk
-  baseline, not a clinical or general T2D predictor, and the system says so
-  rather than pretending otherwise.
+  is a telephone-survey answer, subject to recall accuracy, non-response,
+  and telephone-survey coverage bias — not a clinical or general T2D
+  predictor.
+- **Known duplicate-row characteristic in the training data.** The source
+  CSV contains ~9.4% exact-duplicate rows (23,899–23,968 depending on which
+  columns are compared). These are kept, not dropped: with 17 of 21 features
+  binary and the rest small-cardinality buckets, two respondents legitimately
+  sharing an identical answer profile is expected, not a collection error.
+- **No lab-aware ML model.** Neither the production nor the candidate model
+  takes an HbA1c value, a fasting glucose value, or any other lab result as
+  an input feature, because the BRFSS training dataset has no such field to
+  train against — the Digital Twin records lab history, but no model
+  currently consumes it.
+- **PubMed evaluation is infrastructure-only, not a measured accuracy
+  claim.** Retrieval-quality machinery (Hit@K, MRR) exists and is tested,
+  but the expert-labelled ground-truth set it would score against is
+  intentionally empty — no domain expert has labelled query/result
+  relevance, so no PubMed retrieval-accuracy number is claimed anywhere.
+- **Grounding controls reduce specific classes of unsupported output — they
+  do not guarantee the system cannot hallucinate.** What's actually
+  implemented and tested: fabricated evidence citations are stripped and
+  flagged; a claimed model name or numeric score that doesn't match the real
+  computed value is flagged. A general check that every specific patient
+  value mentioned in generated prose was actually present in the supplied
+  data does not yet exist — a real, named boundary of current grounding
+  coverage.
 - **Low precision, by design tradeoff.** Test ROC-AUC 0.818, recall 0.774,
   but precision only 0.330 — most "elevated risk" flags would be false
-  positives. This comes from class-weight-balancing toward not missing
-  positive cases (prediabetes + diabetes are only ~16% of the data), a
-  defensible choice for a *screening* tool, but a real cost stated plainly
-  rather than hidden behind the headline ROC-AUC.
-- **Two binary lifestyle levers have a genuinely small measured effect.**
-  Flipping `PhysActivity` or `Smoker` alone moves the trained model's risk
-  score by roughly 0.005–0.01 — far smaller than a comparable BMI change.
-  This is the model's real, honest behavior on real survey data, not a bug;
-  the What-if Simulator shows it as-is rather than exaggerating it.
-- **23,899 duplicate rows (~9.4%) were kept, not dropped.** With 17 of 21
-  features binary and the rest small-cardinality buckets, distinct real
-  respondents sharing an identical answer profile is expected. There's no
-  principled way to separate a "real" duplicate from a collection artifact,
-  and dropping them would arbitrarily bias the sample toward less-common
-  response profiles.
+  positives at a population level. This comes from class-weight-balancing
+  toward not missing positive cases, a defensible choice for a screening
+  tool, reported plainly rather than hidden behind the headline ROC-AUC.
 - **The simulation delta model is a documented heuristic**, not a validated
   physiological model. A trajectory shows the *sensitivity of the trained
   model* to changed inputs — not a forecast of real clinical outcomes.
-- **The safety agent is a teaching implementation** of a governance pattern.
-  Keyword-and-rule matching is bypassable by paraphrase and is not
+- **The safety agent is a teaching implementation** of a governance
+  pattern. Keyword-and-rule matching is bypassable by paraphrase and is not
   regulatory-grade clinical-AI review.
-- **The local LLM is small** (3–4B), so phrasing quality is limited; mitigated
-  by RAG grounding, narrow scope and safety gating.
-- **SQLite rather than PostgreSQL.** Postgres with `JSONB` columns was
-  considered and initially specified: it would give indexable/queryable JSON
-  payloads and real concurrent access, which is what a production version of
-  an event-sourced timeline would want. SQLite was chosen instead so the
-  project runs with `pip install` and nothing else — no server to install, no
-  container runtime, no credentials to configure for a grader. The tradeoff is
-  accepted deliberately: JSON payloads are stored as text and cannot be
-  queried by key, and concurrent writers would be a problem at any real scale.
-  For a single-user educational prototype neither limitation bites, and the
-  schema is plain SQLAlchemy, so migrating to Postgres later would mean
-  changing a connection string and the JSON column type, not the model layer.
-- **Not a clinical tool.** Coursework and demonstration only.
+- **SQLite rather than PostgreSQL.** Chosen so the project runs with `pip
+  install` and nothing else — no server, no container runtime, no
+  credentials to configure. The tradeoff is accepted deliberately; migrating
+  later would mean changing a connection string and a column type, not the
+  model layer.
 
 ---
 

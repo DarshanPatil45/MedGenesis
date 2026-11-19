@@ -1,3 +1,6 @@
+// Mirrors backend/app/schemas.py exactly — field names are not renamed or
+// reshaped here. Every type below was checked directly against that file.
+
 export type SafetyStatus = 'APPROVED' | 'FLAGGED_FOR_CLINICIAN_REVIEW' | 'BLOCKED'
 
 export interface Safety {
@@ -38,6 +41,40 @@ export interface Timeline {
   patient_id: number
   events: TimelineEvent[]
   current_state: Record<string, unknown>
+}
+
+export type LabTrendLabel = 'no_data' | 'insufficient_data' | 'stable' | 'increasing' | 'decreasing' | 'mixed'
+
+export interface LabRecord {
+  test_name: string
+  value: number
+  unit?: string
+  recorded_at: string
+  [key: string]: unknown
+}
+
+export interface LabTrend {
+  test_name: string
+  latest: LabRecord | null
+  history: LabRecord[]
+  trend: LabTrendLabel
+}
+
+export interface MedicationRecord {
+  medication_name: string
+  action: string
+  dose?: string
+  recorded_at: string
+  [key: string]: unknown
+}
+
+export interface DigitalTwin {
+  patient: Record<string, unknown>
+  clinical: Record<string, unknown>
+  laboratory: { latest: Record<string, LabRecord>; history: LabRecord[] }
+  medications: { current: MedicationRecord[]; history: MedicationRecord[] }
+  lifestyle: Record<string, unknown>
+  timeline: Record<string, unknown>[]
 }
 
 export interface Screening {
@@ -155,8 +192,6 @@ export interface AgentRun {
   trace: string[]
 }
 
-// --- Phase 6/7: Clinical Analysis Agent ---
-
 export type ClaimType =
   | 'patient_observation'
   | 'model_observation'
@@ -190,46 +225,6 @@ export interface ClinicalAnalysis {
   trace: string[]
 }
 
-// --- Phase 2 Digital Twin endpoints (existed since Phase 2, first
-// consumed by the frontend in Phase 7's Clinical Analysis page) ---
-
-export interface LabRecord {
-  test_name: string
-  value: number
-  unit?: string
-  recorded_at: string
-  [key: string]: unknown
-}
-
-export type LabTrendLabel = 'no_data' | 'insufficient_data' | 'stable' | 'increasing' | 'decreasing' | 'mixed'
-
-export interface LabTrend {
-  test_name: string
-  latest: LabRecord | null
-  history: LabRecord[]
-  trend: LabTrendLabel
-}
-
-export interface MedicationRecord {
-  medication_name: string
-  action: string
-  dose?: string
-  recorded_at: string
-  [key: string]: unknown
-}
-
-export interface DigitalTwin {
-  patient: Record<string, unknown>
-  clinical: Record<string, unknown>
-  laboratory: { latest: Record<string, LabRecord>; history: LabRecord[] }
-  medications: { current: MedicationRecord[]; history: MedicationRecord[] }
-  lifestyle: Record<string, unknown>
-  timeline: Record<string, unknown>[]
-}
-
-// --- Phase 3 model-comparison endpoint (existed since Phase 3, first
-// consumed by the frontend in this polish pass — GET /api/ml/comparison) ---
-
 export interface ModelMetrics {
   model_version: string
   algorithm: string
@@ -242,9 +237,29 @@ export interface ModelMetrics {
   feature_importances: Record<string, number>
 }
 
+/** Response of POST /api/ml/xgboost/predict — candidate model only. */
+export interface XGBoostPredictOut {
+  model: string
+  model_version: string
+  status: string
+  prediction: number | null
+  score: number | null
+  risk_tier: string | null
+  features_used: string[]
+  unavailable_reason: string | null
+  disclaimer: string
+}
+
 export interface ModelComparison {
   random_forest: ModelMetrics
   xgboost: ModelMetrics
   metrics_table: Record<string, Record<string, number>>
   n_test: number
+}
+
+export interface EvidenceSearch {
+  query: string
+  source: string
+  backend: string
+  results: EvidenceSource[]
 }

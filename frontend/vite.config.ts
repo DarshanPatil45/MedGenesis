@@ -1,25 +1,23 @@
+/// <reference types="vitest/config" />
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vitest/config'
+import { defineConfig } from 'vite'
 
-// Dev-only convenience: proxies the backend through the frontend's own
-// origin so the whole app (UI + API + Swagger docs) is reachable from one
-// URL during local development. BACKEND_URL defaults to :8000 (the
-// backend's documented default port) but can be overridden — e.g. when
-// that port is already taken by something else on the machine.
-const BACKEND_URL = process.env.MEDGENESIS_BACKEND_URL ?? 'http://localhost:8000'
+const API_TARGET = 'http://localhost:8010'
 
+// https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': BACKEND_URL,
-      '/docs': BACKEND_URL,
-      '/openapi.json': BACKEND_URL,
+      '/api': API_TARGET,
+      '/docs': API_TARGET,
+      '/openapi.json': API_TARGET,
     },
   },
   test: {
     environment: 'jsdom',
     globals: true,
-    include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: './src/setupTests.ts',
   },
 })

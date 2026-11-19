@@ -218,14 +218,24 @@ def _build_patient_summary(twin_state: dict[str, Any], relevant_fields: list[str
     return claims
 
 
+# Lab test names surfaced verbatim as patient-observation claims when
+# present — same treatment as HbA1c below, extended (Diabetes & Blood
+# Sugar feature) to the two glucose tests VitalsLabsDrawer/DiabetesDrawer
+# can now record. Never inferred, never compared to a threshold here —
+# just "the record shows this value was recorded on this date".
+_SIMPLE_LAB_CLAIM_TESTS: tuple[str, ...] = ("HbA1c", "Fasting Glucose", "2-Hour Glucose Tolerance Test")
+
+
 def _lab_and_medication_claims(structured_twin: dict[str, Any]) -> list[ClinicalClaim]:
     claims: list[ClinicalClaim] = []
     latest_labs = structured_twin.get("laboratory", {}).get("latest", {})
-    if "HbA1c" in latest_labs:
-        rec = latest_labs["HbA1c"]
+    for test_name in _SIMPLE_LAB_CLAIM_TESTS:
+        if test_name not in latest_labs:
+            continue
+        rec = latest_labs[test_name]
         claims.append(
             ClinicalClaim(
-                f"Latest recorded HbA1c: {rec.get('value')}{rec.get('unit', '')} "
+                f"Latest recorded {test_name}: {rec.get('value')}{rec.get('unit', '')} "
                 f"(recorded {rec.get('recorded_at', 'unknown date')}).",
                 CLAIM_PATIENT_OBSERVATION,
             )

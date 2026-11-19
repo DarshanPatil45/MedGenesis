@@ -6,6 +6,7 @@ import type {
   ClinicalAnalysis,
   DemoProfile,
   DigitalTwin,
+  EvidenceSearch,
   Health,
   LabTrend,
   ModelComparison,
@@ -13,9 +14,14 @@ import type {
   Screening,
   Simulation,
   Timeline,
+  TimelineEvent,
+  XGBoostPredictOut,
 } from './types'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+// Empty by default so requests go through Vite's dev proxy (see
+// vite.config.ts, which forwards /api to the FastAPI backend) — set
+// VITE_API_BASE_URL to hit a backend on a different origin.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export class ApiError extends Error {
   status: number
@@ -35,10 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
     })
   } catch {
-    throw new ApiError(
-      `Cannot reach the MedGenesis API at ${BASE_URL}. Is the backend running?`,
-      0,
-    )
+    throw new ApiError('Cannot reach the MedGenesis API. Is the backend running?', 0)
   }
   if (!resp.ok) {
     let detail = `${resp.status} ${resp.statusText}`
@@ -72,8 +75,16 @@ export const api = {
   }) => post<Patient>('/api/patients', body),
 
   timeline: (patientId: number) => request<Timeline>(`/api/twin/${patientId}/timeline`),
-  appendEvent: (patientId: number, body: { event_type: string; payload: Record<string, unknown> }) =>
-    post(`/api/twin/${patientId}/events`, { ...body, source: 'real' }),
+  // Backend responds with TimelineEventOut (routers/twin.py); typed
+  // explicitly so callers get the created event back, not `unknown`.
+  // `recorded_at` is optional — schemas.TimelineEventCreate already accepts
+  // it and defaults to "now" server-side when omitted (twin_service
+  // .append_event); passing it lets a backdated clinical entry (e.g. a lab
+  // result from a visit last week) carry its true date.
+  appendEvent: (
+    patientId: number,
+    body: { event_type: string; payload: Record<string, unknown>; recorded_at?: string },
+  ) => post<TimelineEvent>(`/api/twin/${patientId}/events`, { ...body, source: 'real' }),
   digitalTwin: (patientId: number) => request<DigitalTwin>(`/api/twin/${patientId}/digital-twin`),
   labTrend: (patientId: number, testName: string) =>
     request<LabTrend>(`/api/twin/${patientId}/labs/${encodeURIComponent(testName)}`),
@@ -113,8 +124,15 @@ export const api = {
       use_llm: true,
     }),
 
+  searchEvidence: (query: string, source: 'local' | 'pubmed' | 'all' = 'local', k?: number) =>
+    post<EvidenceSearch>('/api/evidence/search', { query, source, k: k ?? null }),
+
   auditLog: () => request<AuditLogRow[]>('/api/safety/audit-log?limit=200'),
   safetyPolicy: () => request<Record<string, unknown>>('/api/safety/policy'),
 
   mlComparison: () => request<ModelComparison>('/api/ml/comparison'),
+
+  /** Candidate-model score for one patient — comparison only, never production. */
+  xgboostPredict: (patientId: number) =>
+    post<XGBoostPredictOut>('/api/ml/xgboost/predict', { patient_id: patientId }),
 }
